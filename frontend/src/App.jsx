@@ -2,8 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import { Wind, ShieldAlert, BrainCircuit, FileDown, LogOut, User as UserIcon, LogIn, UserPlus, Menu, X, Map as MapIcon } from 'lucide-react';
 
-// Export API Base URL
-export const API_BASE_URL = 'http://localhost:8080';
+// Export API Base URL — uses env variable in production (Render backend)
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 // Auth Context
 const AuthContext = createContext(null);

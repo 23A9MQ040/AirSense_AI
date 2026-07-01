@@ -1,144 +1,255 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, API_BASE_URL } from '../App';
-import { FileDown, MapPin, Sparkles, CheckCircle, ShieldCheck, Heart, AlertCircle } from 'lucide-react';
+import {
+  FileDown, Activity, ShieldAlert, MapPin, Sparkles,
+  AlertTriangle, CheckCircle, TrendingUp, RefreshCw, Clock
+} from 'lucide-react';
 
-function ReportPage() {
-  const { user } = useAuth();
-  const [city, setCity] = useState(user.location || 'Delhi');
-  const [loading, setLoading] = useState(false);
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
-
-  const handleDownload = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setSuccess('');
-    setError('');
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/ai/report?city=${city}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${user.token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to generate health report. Please try again.');
-      }
-
-      // Convert response to blob
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      
-      // Create hidden link to download
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `airsense_health_report_${city.replace(/\s+/g, '_')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      
-      // Cleanup
-      document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
-
-      setSuccess(`Report for ${city} successfully generated and downloaded!`);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+function RiskBadge({ level }) {
+  const colors = {
+    LOW: 'bg-emerald-950/50 border-emerald-900/40 text-emerald-400',
+    MEDIUM: 'bg-amber-950/50 border-amber-900/40 text-amber-400',
+    HIGH: 'bg-orange-950/50 border-orange-900/40 text-orange-400',
+    CRITICAL: 'bg-red-950/50 border-red-900/40 text-red-400',
   };
-
   return (
-    <div className="fade-in max-w-2xl mx-auto my-6">
-      <div className="glass-panel p-8 space-y-6 shadow-2xl border-slate-800">
-        
-        {/* Header */}
-        <div className="text-center space-y-3 pb-6 border-b border-slate-900">
-          <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl border border-emerald-500/25 flex items-center justify-center mx-auto text-emerald-400">
-            <FileDown className="w-6 h-6" />
-          </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-white font-sans">
-            AI Health Report
-          </h2>
-          <p className="text-sm text-slate-400 max-w-md mx-auto">
-            Generate and download a comprehensive clinical PDF log containing your local air statistics and personalized medical actions.
-          </p>
-        </div>
+    <span className={`px-3 py-1 rounded-full text-xs font-bold border ${colors[level] || colors.MEDIUM}`}>
+      {level} RISK
+    </span>
+  );
+}
 
-        {error && (
-          <div className="flex items-center space-x-2 bg-rose-500/10 border border-rose-500/25 p-4 rounded-xl text-rose-400 text-sm">
-            <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {success && (
-          <div className="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/25 p-4 rounded-xl text-emerald-400 text-sm">
-            <CheckCircle className="w-5 h-5 flex-shrink-0" />
-            <span>{success}</span>
-          </div>
-        )}
-
-        {/* Info panel */}
-        <div className="bg-slate-950/60 border border-slate-900 p-6 rounded-2xl space-y-4 text-left text-xs">
-          <h4 className="font-bold text-sm text-slate-200 flex items-center space-x-1.5">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span>What is included in this report?</span>
-          </h4>
-          <ul className="space-y-2 text-slate-400 list-disc list-inside">
-            <li><strong className="text-slate-300">User Health Profile:</strong> Age, asthma history, and allergy conditions.</li>
-            <li><strong className="text-slate-300">Current Air Metrics:</strong> AQI, PM2.5, and PM10 values for the chosen city.</li>
-            <li><strong className="text-slate-300">Risk Assessment Log:</strong> Historical risk scores (0.0 to 1.0) and calculated levels.</li>
-            <li><strong className="text-slate-300">Personalized Precautions:</strong> Targeted medical guidelines generated for your specific vulnerabilities.</li>
-          </ul>
-        </div>
-
-        {/* Action Form */}
-        <form onSubmit={handleDownload} className="space-y-4 text-left">
-          <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 tracking-wider">TARGET MONITORING CITY</label>
-            <div className="relative">
-              <MapPin className="w-5 h-5 text-slate-500 absolute left-3 top-3.5" />
-              <input
-                type="text"
-                required
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Delhi, London, New York"
-                className="w-full bg-slate-950/80 border border-slate-800 rounded-xl py-3 pl-11 pr-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors text-sm"
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-700 text-white font-semibold py-3.5 rounded-xl shadow-lg shadow-emerald-950/20 hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center space-x-2 text-sm mt-6"
-          >
-            {loading ? (
-              <span className="flex items-center space-x-2">
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                <span>Generating PDF Report...</span>
-              </span>
-            ) : (
-              <>
-                <FileDown className="w-4 h-4" />
-                <span>Generate &amp; Download PDF</span>
-              </>
-            )}
-          </button>
-        </form>
-
-        <div className="flex items-center justify-center space-x-1.5 text-[10px] text-slate-500">
-          <ShieldCheck className="w-4 h-4 text-slate-500" />
-          <span>All reports are generated securely and contain your persistent data.</span>
-        </div>
-
+function AQIBadge({ aqi }) {
+  const getColor = (v) => {
+    if (v <= 50) return 'bg-emerald-950/50 border-emerald-900/40 text-emerald-400';
+    if (v <= 100) return 'bg-yellow-950/50 border-yellow-900/40 text-yellow-400';
+    if (v <= 150) return 'bg-orange-950/50 border-orange-900/40 text-orange-400';
+    if (v <= 200) return 'bg-red-950/50 border-red-900/40 text-red-400';
+    return 'bg-purple-950/50 border-purple-900/40 text-purple-400';
+  };
+  const getLabel = (v) => {
+    if (v <= 50) return 'Good';
+    if (v <= 100) return 'Moderate';
+    if (v <= 150) return 'Unhealthy (Sensitive)';
+    if (v <= 200) return 'Unhealthy';
+    return 'Very Unhealthy+';
+  };
+  return (
+    <div className={`flex items-center space-x-2 px-3 py-2 rounded-xl border ${getColor(aqi)}`}>
+      <span className="text-2xl font-black">{aqi}</span>
+      <div>
+        <div className="text-xs font-bold opacity-80">AQI</div>
+        <div className="text-xs">{getLabel(aqi)}</div>
       </div>
     </div>
   );
 }
 
-export default ReportPage;
+export default function ReportPage() {
+  const { user } = useAuth();
+  const [city, setCity] = useState(user.location || 'Delhi');
+  const [searchInput, setSearchInput] = useState(user.location || 'Delhi');
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState('');
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  const headers = { 'Authorization': `Bearer ${user.token}` };
+
+  const fetchSummary = async (targetCity) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/report/summary?city=${targetCity}`, { headers });
+      if (!res.ok) throw new Error('Failed to load report summary');
+      setSummary(await res.json());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchSummary(city); }, [city]);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (searchInput.trim()) setCity(searchInput.trim());
+  };
+
+  const handleDownloadPDF = async () => {
+    setDownloading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/report/generate?city=${city}`, { headers });
+      if (!res.ok) throw new Error('Failed to generate PDF');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `airsense-health-report-${city.replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 4000);
+    } catch (e) {
+      setError('PDF generation failed: ' + e.message);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 pb-8 max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center space-x-2">
+            <FileDown className="w-6 h-6 text-emerald-400" />
+            <span>Health Report</span>
+          </h1>
+          <p className="text-slate-400 text-sm">AI-generated personalized air quality health analysis</p>
+        </div>
+        <button
+          onClick={() => fetchSummary(city)}
+          className="p-2 bg-slate-900 border border-slate-800 rounded-xl hover:border-emerald-900/40 hover:text-emerald-400 transition-colors"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-emerald-400' : ''}`} />
+        </button>
+      </div>
+
+      {/* City Search */}
+      <form onSubmit={handleSearch} className="flex items-center space-x-2">
+        <div className="flex-1 flex items-center bg-slate-900 border border-slate-800 rounded-xl overflow-hidden focus-within:border-emerald-700/50">
+          <MapPin className="w-4 h-4 text-slate-500 ml-3" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            placeholder="Enter city for report..."
+            className="flex-1 bg-transparent text-white px-3 py-2.5 text-sm outline-none placeholder-slate-600"
+          />
+        </div>
+        <button type="submit" className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-xl transition-colors">
+          Generate
+        </button>
+      </form>
+
+      {error && (
+        <div className="flex items-center space-x-2 text-red-400 text-sm bg-red-950/30 border border-red-900/30 rounded-xl px-4 py-3">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {downloadSuccess && (
+        <div className="flex items-center space-x-2 text-emerald-400 text-sm bg-emerald-950/30 border border-emerald-900/30 rounded-xl px-4 py-3">
+          <CheckCircle className="w-4 h-4 flex-shrink-0" />
+          <span>Report downloaded successfully!</span>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center min-h-48">
+          <div className="text-center">
+            <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-slate-400 text-sm">Generating report...</p>
+          </div>
+        </div>
+      ) : summary && (
+        <>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col items-center justify-center text-center">
+              <MapPin className="w-6 h-6 text-emerald-400 mb-2" />
+              <p className="text-2xl font-bold text-white">{summary.city}</p>
+              <p className="text-xs text-slate-400">Monitoring Location</p>
+            </div>
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col items-center justify-center text-center">
+              <AQIBadge aqi={summary.currentAqi} />
+              <p className="text-xs text-slate-400 mt-2">Current AQI</p>
+              <p className="text-xs text-slate-500">Avg: {summary.avgAqi}</p>
+            </div>
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col items-center justify-center text-center">
+              <RiskBadge level={summary.riskLevel} />
+              <p className="text-xs text-slate-400 mt-2">Health Risk Score</p>
+              <p className="text-2xl font-bold text-white mt-1">{summary.riskScore}<span className="text-sm text-slate-500">/100</span></p>
+            </div>
+          </div>
+
+          {/* Recommendations */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-slate-300 mb-4 flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <span>AI Health Recommendations</span>
+            </h3>
+            <div className="space-y-2">
+              {(summary.recommendations || []).map((rec, i) => (
+                <div key={i} className="flex items-start space-x-3 text-sm text-slate-300 bg-slate-800/50 rounded-xl px-3 py-2.5">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <span>{rec}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* History summary */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+            <div className="flex items-center space-x-2 mb-4">
+              <TrendingUp className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm font-semibold text-slate-300">Data Summary</h3>
+            </div>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold text-purple-400">{summary.historyCount}</p>
+                <p className="text-xs text-slate-400">Data Points</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-amber-400">{summary.avgAqi}</p>
+                <p className="text-xs text-slate-400">Average AQI</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-emerald-400">{summary.riskScore}/100</p>
+                <p className="text-xs text-slate-400">Risk Score</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Report Generation Info */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+            <div className="flex items-center space-x-2 mb-3">
+              <Clock className="w-4 h-4 text-slate-500" />
+              <span className="text-xs text-slate-400">Generated: {new Date(summary.generatedAt).toLocaleString()}</span>
+            </div>
+            <p className="text-sm text-slate-400 mb-4">
+              Your personalized PDF report includes: full pollutant analysis, health risk assessment with explanations, 
+              AI recommendations, historical AQI trend, and emergency guidance tailored to your health profile.
+            </p>
+            <button
+              onClick={handleDownloadPDF}
+              disabled={downloading}
+              className="w-full flex items-center justify-center space-x-2 py-3 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 disabled:opacity-60 text-white font-semibold rounded-xl transition-all duration-300 shadow-lg shadow-emerald-900/20"
+            >
+              {downloading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Generating PDF...</span>
+                </>
+              ) : (
+                <>
+                  <FileDown className="w-4 h-4" />
+                  <span>Download Full PDF Report</span>
+                </>
+              )}
+            </button>
+            <p className="text-xs text-slate-600 text-center mt-2">
+              ⚠️ For informational purposes only — not a substitute for medical advice.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

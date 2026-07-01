@@ -7,5 +7,16 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: AGENTS_PATH
+        value: /agents-cli/agents_workflow.py
+      - key: H2_CONSOLE
+        value: "false"
+      - key: CACHE_TYPE
+        value: simple
+      - key: CORS_ORIGINS
+        value: https://23a9mq040.github.io,http://localhost:5173
     region: oregon
     plan: free
+    healthCheckPath: /api/public/health

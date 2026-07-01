@@ -1,35 +1,138 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth, API_BASE_URL } from '../App';
 import { 
   Heart, ShieldAlert, ShieldCheck, MapPin, Search, RefreshCw, 
-  Activity, Sparkles, User, UserCheck, AlertTriangle, Thermometer, 
-  Droplets, Wind as WindIcon, Bell 
+  Activity, Sparkles, AlertTriangle, Thermometer, 
+  Droplets, Wind as WindIcon, Bell, TrendingUp, TrendingDown, 
+  Clock, CheckCircle, ChevronDown, ChevronUp
 } from 'lucide-react';
+import {
+  Chart as ChartJS,
+  CategoryScale, LinearScale, PointElement, LineElement,
+  BarElement, ArcElement, Title, Tooltip, Legend, Filler
+} from 'chart.js';
+import { Line, Bar } from 'react-chartjs-2';
 
-function DashboardPage() {
+ChartJS.register(
+  CategoryScale, LinearScale, PointElement, LineElement,
+  BarElement, ArcElement, Title, Tooltip, Legend, Filler
+);
+
+// ─── AQI Gauge Component ────────────────────────────────────────
+function AQIGauge({ aqi }) {
+  const getColor = (v) => {
+    if (v <= 50) return '#10b981';
+    if (v <= 100) return '#f59e0b';
+    if (v <= 150) return '#f97316';
+    if (v <= 200) return '#ef4444';
+    if (v <= 300) return '#8b5cf6';
+    return '#7f1d1d';
+  };
+  const getLabel = (v) => {
+    if (v <= 50) return 'Good';
+    if (v <= 100) return 'Moderate';
+    if (v <= 150) return 'Unhealthy (Sensitive)';
+    if (v <= 200) return 'Unhealthy';
+    if (v <= 300) return 'Very Unhealthy';
+    return 'Hazardous';
+  };
+
+  const pct = Math.min(100, (aqi / 400) * 100);
+  const color = getColor(aqi);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-48 h-24 overflow-hidden">
+        <svg viewBox="0 0 200 100" className="w-full">
+          <path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#1e293b" strokeWidth="18" />
+          <path
+            d="M10,100 A90,90 0 0,1 190,100"
+            fill="none"
+            stroke={color}
+            strokeWidth="18"
+            strokeDasharray={`${pct * 2.83} 283`}
+            strokeLinecap="round"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-end pb-1">
+          <span className="text-4xl font-black" style={{ color }}>{aqi}</span>
+          <span className="text-xs font-bold" style={{ color }}>AQI</span>
+        </div>
+      </div>
+      <span className="mt-1 px-3 py-1 rounded-full text-xs font-bold" style={{ backgroundColor: color + '22', color }}>
+        {getLabel(aqi)}
+      </span>
+    </div>
+  );
+}
+
+// ─── Risk Badge ─────────────────────────────────────────────────
+function RiskBadge({ level }) {
+  const cfg = {
+    LOW: { color: 'text-emerald-400', bg: 'bg-emerald-950/50 border-emerald-900/40', icon: ShieldCheck },
+    MEDIUM: { color: 'text-amber-400', bg: 'bg-amber-950/50 border-amber-900/40', icon: AlertTriangle },
+    HIGH: { color: 'text-orange-400', bg: 'bg-orange-950/50 border-orange-900/40', icon: ShieldAlert },
+    CRITICAL: { color: 'text-red-400', bg: 'bg-red-950/50 border-red-900/40', icon: ShieldAlert },
+  };
+  const c = cfg[level] || cfg.MEDIUM;
+  const Icon = c.icon;
+  return (
+    <div className={`flex items-center space-x-2 px-3 py-2 rounded-xl border ${c.bg}`}>
+      <Icon className={`w-5 h-5 ${c.color}`} />
+      <span className={`font-bold ${c.color}`}>{level}</span>
+    </div>
+  );
+}
+
+// ─── Pollutant Card ─────────────────────────────────────────────
+function PollutantCard({ label, value, unit, max, color = '#10b981' }) {
+  const pct = Math.min(100, (value / max) * 100);
+  return (
+    <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+      <div className="flex justify-between items-start mb-2">
+        <span className="text-xs text-slate-400 font-medium">{label}</span>
+        <span className="text-sm font-bold text-white">{Number(value).toFixed(1)} <span className="text-xs text-slate-500">{unit}</span></span>
+      </div>
+      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: color }} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Weather Card ───────────────────────────────────────────────
+function WeatherCard({ icon: Icon, label, value, color }) {
+  return (
+    <div className="flex flex-col items-center bg-slate-900/50 border border-slate-800 rounded-xl p-3">
+      <Icon className={`w-5 h-5 mb-1 ${color}`} />
+      <span className="text-lg font-bold text-white">{value}</span>
+      <span className="text-xs text-slate-400">{label}</span>
+    </div>
+  );
+}
+
+export default function DashboardPage() {
   const { user, updateLocation } = useAuth();
   
-  // Dashboard states
   const [city, setCity] = useState(user.location || 'Delhi');
   const [searchInput, setSearchInput] = useState(user.location || 'Delhi');
   const [stats, setStats] = useState(null);
   const [healthProfile, setHealthProfile] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [history, setHistory] = useState([]);
+  const [forecast, setForecast] = useState(null);
   
-  // Loading & error states
   const [loadingStats, setLoadingStats] = useState(true);
   const [updatingProfile, setUpdatingProfile] = useState(false);
   const [statsError, setStatsError] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
+  const [showProfile, setShowProfile] = useState(false);
   
-  // Health Profile Form states
   const [age, setAge] = useState(25);
   const [asthmaHistory, setAsthmaHistory] = useState(false);
   const [allergyType, setAllergyType] = useState('None');
   const [sensitivityLevel, setSensitivityLevel] = useState('LOW');
 
-  // Fetch all dashboard data
   const fetchDashboardData = async (targetCity) => {
     setLoadingStats(true);
     setStatsError('');
@@ -39,426 +142,422 @@ function DashboardPage() {
         'Content-Type': 'application/json'
       };
 
-      // 1. Fetch Stats
-      const statsRes = await fetch(`${API_BASE_URL}/api/dashboard/stats?city=${targetCity}`, { headers });
-      if (!statsRes.ok) throw new Error('Failed to fetch air quality stats');
-      const statsData = await statsRes.json();
-      setStats(statsData);
-      
-      // Update location in context and localstorage if changed
-      if (statsData.city && statsData.city !== user.location) {
-        updateLocation(statsData.city);
-        setCity(statsData.city);
-        setSearchInput(statsData.city);
+      const [statsRes, profileRes, alertsRes, histRes, forecastRes] = await Promise.allSettled([
+        fetch(`${API_BASE_URL}/api/dashboard/stats?city=${targetCity}`, { headers }),
+        fetch(`${API_BASE_URL}/api/dashboard/health-profile`, { headers }),
+        fetch(`${API_BASE_URL}/api/dashboard/alerts`, { headers }),
+        fetch(`${API_BASE_URL}/api/dashboard/history?city=${targetCity}`, { headers }),
+        fetch(`${API_BASE_URL}/api/dashboard/forecast?city=${targetCity}`, { headers }),
+      ]);
+
+      if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+        const d = await statsRes.value.json();
+        setStats(d);
+        if (d.city && d.city !== user.location) {
+          updateLocation(d.city);
+          setCity(d.city);
+          setSearchInput(d.city);
+        }
+      } else {
+        throw new Error('Failed to fetch air quality data');
       }
 
-      // 2. Fetch Health Profile (only once, or refetch to sync)
-      const profileRes = await fetch(`${API_BASE_URL}/api/dashboard/health-profile`, { headers });
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setHealthProfile(profileData);
-        setAge(profileData.age);
-        setAsthmaHistory(profileData.asthmaHistory);
-        setAllergyType(profileData.allergyType);
-        setSensitivityLevel(profileData.sensitivityLevel);
+      if (profileRes.status === 'fulfilled' && profileRes.value.ok) {
+        const d = await profileRes.value.json();
+        setHealthProfile(d);
+        setAge(d.age || 25);
+        setAsthmaHistory(d.asthmaHistory || false);
+        setAllergyType(d.allergyType || 'None');
+        setSensitivityLevel(d.sensitivityLevel || 'LOW');
       }
 
-      // 3. Fetch Alerts
-      const alertsRes = await fetch(`${API_BASE_URL}/api/dashboard/alerts`, { headers });
-      if (alertsRes.ok) {
-        const alertsData = await alertsRes.json();
-        setAlerts(alertsData);
+      if (alertsRes.status === 'fulfilled' && alertsRes.value.ok) {
+        setAlerts(await alertsRes.value.json());
       }
 
-      // 4. Fetch History
-      const historyRes = await fetch(`${API_BASE_URL}/api/dashboard/history?city=${targetCity}`, { headers });
-      if (historyRes.ok) {
-        const historyData = await historyRes.json();
-        setHistory(historyData);
+      if (histRes.status === 'fulfilled' && histRes.value.ok) {
+        setHistory(await histRes.value.json());
       }
 
-    } catch (err) {
-      setStatsError(err.message);
+      if (forecastRes.status === 'fulfilled' && forecastRes.value.ok) {
+        setForecast(await forecastRes.value.json());
+      }
+    } catch (e) {
+      setStatsError(e.message || 'Failed to load dashboard data');
     } finally {
       setLoadingStats(false);
     }
   };
 
-  useEffect(() => {
-    fetchDashboardData(city);
-  }, []);
+  useEffect(() => { fetchDashboardData(city); }, [city]);
 
-  const handleSearchSubmit = (e) => {
+  const handleSearch = (e) => {
     e.preventDefault();
-    if (searchInput.trim()) {
-      fetchDashboardData(searchInput.trim());
-    }
+    if (searchInput.trim()) setCity(searchInput.trim());
   };
 
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     setUpdatingProfile(true);
-    setProfileSuccess('');
-    
     try {
-      const response = await fetch(`${API_BASE_URL}/api/dashboard/health-profile`, {
+      const headers = { 'Authorization': `Bearer ${user.token}`, 'Content-Type': 'application/json' };
+      const res = await fetch(`${API_BASE_URL}/api/dashboard/health-profile`, {
         method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${user.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          age,
-          asthmaHistory,
-          allergyType,
-          sensitivityLevel
-        })
+        headers,
+        body: JSON.stringify({ age: Number(age), asthmaHistory, allergyType, sensitivityLevel }),
       });
-
-      if (!response.ok) throw new Error('Failed to update health profile');
-      const updatedProfile = await response.json();
-      setHealthProfile(updatedProfile);
-      setProfileSuccess('Profile updated successfully!');
-      
-      // Immediately recalculate risk stats for the current city
-      fetchDashboardData(city);
-    } catch (err) {
-      alert(err.message);
+      if (!res.ok) throw new Error('Update failed');
+      setProfileSuccess('Health profile updated successfully!');
+      setTimeout(() => setProfileSuccess(''), 3000);
+    } catch (e) {
+      setStatsError('Failed to update profile');
     } finally {
       setUpdatingProfile(false);
     }
   };
 
-  // Helper to get AQI category styles
-  const getAqiConfig = (aqi) => {
-    if (aqi <= 50) return { label: 'Good', color: 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10', barColor: 'bg-emerald-500' };
-    if (aqi <= 100) return { label: 'Moderate', color: 'text-yellow-400 border-yellow-500/20 bg-yellow-500/10', barColor: 'bg-yellow-500' };
-    if (aqi <= 150) return { label: 'Unhealthy for Sensitive Groups', color: 'text-orange-400 border-orange-500/20 bg-orange-500/10', barColor: 'bg-orange-500' };
-    if (aqi <= 200) return { label: 'Unhealthy', color: 'text-rose-400 border-rose-500/20 bg-rose-500/10', barColor: 'bg-rose-500' };
-    if (aqi <= 300) return { label: 'Very Unhealthy', color: 'text-purple-400 border-purple-500/20 bg-purple-500/10', barColor: 'bg-purple-500' };
-    return { label: 'Hazardous', color: 'text-red-500 border-red-500/20 bg-red-500/10', barColor: 'bg-red-700' };
+  // Chart data for history
+  const histChartData = {
+    labels: history.slice(-10).map((h, i) => `${i + 1}`),
+    datasets: [{
+      label: 'AQI',
+      data: history.slice(-10).map(h => h.aqi),
+      borderColor: '#10b981',
+      backgroundColor: 'rgba(16,185,129,0.1)',
+      tension: 0.4,
+      fill: true,
+      pointRadius: 3,
+    }],
   };
 
-  // Helper to get Risk Level color
-  const getRiskConfig = (level) => {
-    switch (level?.toUpperCase()) {
-      case 'HIGH':
-        return { label: 'High Risk Alert', color: 'text-rose-400 bg-rose-500/10 border-rose-500/25', icon: <ShieldAlert className="w-5 h-5 text-rose-400" /> };
-      case 'MEDIUM':
-        return { label: 'Medium Risk Warning', color: 'text-amber-400 bg-amber-500/10 border-amber-500/25', icon: <AlertTriangle className="w-5 h-5 text-amber-400" /> };
-      default:
-        return { label: 'Low Risk Status', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/25', icon: <ShieldCheck className="w-5 h-5 text-emerald-400" /> };
-    }
+  // Chart data for forecast
+  const forecastChartData = forecast ? {
+    labels: forecast.forecast.slice(0, 12).map(f => f.label),
+    datasets: [{
+      label: 'Predicted AQI',
+      data: forecast.forecast.slice(0, 12).map(f => f.aqi),
+      borderColor: '#8b5cf6',
+      backgroundColor: 'rgba(139,92,246,0.1)',
+      tension: 0.4,
+      fill: true,
+      pointRadius: 2,
+    }],
+  } : null;
+
+  const chartOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } },
+      y: { grid: { color: '#1e293b' }, ticks: { color: '#64748b', font: { size: 10 } } },
+    },
   };
+
+  // Pollutant bar chart
+  const pollutantBarData = stats ? {
+    labels: ['PM2.5', 'PM10', 'CO×10', 'NO2', 'SO2', 'O3'],
+    datasets: [{
+      data: [
+        stats.pm25, stats.pm10,
+        (stats.co || 0.4) * 10,
+        stats.no2 || 12,
+        stats.so2 || 4.5,
+        stats.o3 || 65,
+      ],
+      backgroundColor: ['#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#f97316'],
+      borderRadius: 4,
+    }],
+  } : null;
+
+  if (loadingStats && !stats) {
+    return (
+      <div className="flex items-center justify-center min-h-64">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-400">Loading air quality data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (statsError && !stats) {
+    return (
+      <div className="flex items-center justify-center min-h-64">
+        <div className="bg-red-950/40 border border-red-900/40 rounded-xl p-6 max-w-md text-center">
+          <AlertTriangle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+          <p className="text-red-300 font-semibold mb-2">Failed to load dashboard</p>
+          <p className="text-slate-400 text-sm mb-4">{statsError}</p>
+          <button onClick={() => fetchDashboardData(city)} className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm transition-colors">
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="fade-in space-y-8 pb-10">
-      
-      {/* Header and Search */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="space-y-6 pb-8">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-white m-0">
-            Welcome, <span className="text-gradient-emerald">{user.name}</span>
+          <h1 className="text-2xl font-bold text-white">
+            Hello, <span className="text-emerald-400">{user.name?.split(' ')[0]}</span> 👋
           </h1>
-          <p className="text-sm text-slate-400 mt-1">Real-time health risk &amp; pollution tracking dashboard</p>
+          <p className="text-slate-400 text-sm">Your personalized air quality dashboard</p>
         </div>
-
-        <form onSubmit={handleSearchSubmit} className="flex items-center space-x-2 w-full md:w-fit">
-          <div className="relative w-full md:w-64">
-            <MapPin className="w-4 h-4 text-slate-500 absolute left-3 top-3.5" />
-            <input
-              type="text"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Search city (e.g. Delhi)..."
-              className="w-full bg-slate-900/60 border border-slate-800 rounded-xl py-2.5 pl-9 pr-4 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors text-sm"
-            />
-          </div>
+        <div className="flex items-center space-x-2">
+          <span className="flex items-center space-x-1 text-slate-400 text-sm">
+            <Clock className="w-4 h-4" />
+            <span>Auto-refresh every 10min</span>
+          </span>
           <button
-            type="submit"
-            className="bg-emerald-600 hover:bg-emerald-500 text-white p-3 rounded-xl shadow-lg shadow-emerald-950/20 active:scale-[0.98] transition-all"
-          >
-            <Search className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
             onClick={() => fetchDashboardData(city)}
-            className="bg-slate-900 border border-slate-800 text-slate-400 hover:text-white p-3 rounded-xl transition-all"
-            title="Refresh statistics"
+            className="p-2 bg-slate-900 border border-slate-800 rounded-xl hover:border-emerald-900/40 hover:text-emerald-400 transition-colors"
+            title="Refresh"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${loadingStats ? 'animate-spin text-emerald-400' : ''}`} />
           </button>
-        </form>
+        </div>
       </div>
 
-      {statsError && (
-        <div className="flex items-center space-x-2 bg-rose-500/10 border border-rose-500/25 p-4 rounded-xl text-rose-400 text-sm">
-          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-          <span>Error loading city statistics: {statsError}. Showing simulated fallbacks.</span>
+      {/* City Search */}
+      <form onSubmit={handleSearch} className="flex items-center space-x-2">
+        <div className="flex-1 flex items-center bg-slate-900 border border-slate-800 rounded-xl overflow-hidden focus-within:border-emerald-700/50 transition-colors">
+          <MapPin className="w-4 h-4 text-slate-500 ml-3 flex-shrink-0" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
+            placeholder="Search city..."
+            className="flex-1 bg-transparent text-white px-3 py-2.5 text-sm outline-none placeholder-slate-600"
+          />
         </div>
-      )}
+        <button type="submit" className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-sm font-medium rounded-xl transition-colors flex items-center space-x-1.5">
+          <Search className="w-4 h-4" />
+          <span>Search</span>
+        </button>
+      </form>
 
-      {loadingStats ? (
-        <div className="w-full h-80 flex flex-col items-center justify-center space-y-3">
-          <div className="w-10 h-10 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin"></div>
-          <span className="text-slate-400 text-sm">Fetching live air quality metrics...</span>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* Main Air Quality Info (2 Cols) */}
-          <div className="lg:col-span-2 space-y-8">
-            
-            {/* AQI Gauge Display */}
-            {stats && (
-              <div className="glass-panel p-8 flex flex-col md:flex-row items-center justify-between gap-8 emerald-glow">
-                
-                {/* Visual Gauge */}
-                <div className="relative flex flex-col items-center justify-center">
-                  <div className="w-44 h-44 rounded-full border-8 border-slate-800 flex flex-col items-center justify-center">
-                    <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">AQI INDEX</span>
-                    <span className={`text-6xl font-black tracking-tighter ${getAqiConfig(stats.aqi).color.split(' ')[0]}`}>
-                      {stats.aqi}
-                    </span>
-                    <span className="text-[10px] text-slate-400 font-medium mt-1">LAST HOUR</span>
-                  </div>
-                  {/* Pulse ring if high risk */}
-                  {stats.aqi > 150 && (
-                    <div className="absolute inset-0 rounded-full border border-rose-500/30 pulse-ring-emerald animate-ping pointer-events-none"></div>
-                  )}
-                </div>
-
-                {/* Details */}
-                <div className="flex-1 space-y-4 text-center md:text-left">
-                  <div>
-                    <div className="text-xs text-slate-400 font-bold tracking-wider">CURRENT ENVIRONMENT</div>
-                    <h2 className="text-4xl font-extrabold text-white mt-1">{stats.city || city}</h2>
-                  </div>
-                  
-                  <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-                    <span className={`border text-xs px-3 py-1 rounded-full font-bold ${getAqiConfig(stats.aqi).color}`}>
-                      AQI Status: {getAqiConfig(stats.aqi).label}
-                    </span>
-                    <span className={`border text-xs px-3 py-1 rounded-full font-bold flex items-center space-x-1 ${getRiskConfig(stats.risk_level).color}`}>
-                      {getRiskConfig(stats.risk_level).icon}
-                      <span className="ml-1">Predicted Risk: {stats.risk_level} ({Math.round(stats.risk_score * 100)}%)</span>
-                    </span>
-                  </div>
-
-                  <p className="text-slate-400 text-sm leading-relaxed max-w-md">
-                    The health prediction agent flags this level as <span className="font-semibold text-white">{stats.risk_level}</span> for your profile sensitivity. We suggest consulting the AI assistant for custom workouts.
-                  </p>
-                </div>
+      {stats && (
+        <>
+          {/* Top Row: AQI + Risk + Weather */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* AQI Panel */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col items-center justify-center">
+              <div className="flex items-center space-x-2 mb-3">
+                <MapPin className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-300 font-semibold">{stats.city}</span>
               </div>
-            )}
-
-            {/* Pollutant Breakdowns */}
-            {stats && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                {/* PM 2.5 */}
-                <div className="glass-panel p-6 border-slate-800/80 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center space-x-2 text-emerald-400">
-                      <WindIcon className="w-5 h-5" />
-                      <h3 className="font-bold text-sm text-slate-200">Fine Particulate (PM2.5)</h3>
-                    </div>
-                    <span className="text-xs text-slate-400 font-medium">SAFETY LIMIT: 35.0 µg/m³</span>
-                  </div>
-                  <div className="flex items-baseline space-x-2">
-                    <span className="text-4xl font-black text-white">{stats.pm25}</span>
-                    <span className="text-xs text-slate-400">µg/m³</span>
-                  </div>
-                  {/* Progress bar */}
-                  <div className="w-full bg-slate-950 rounded-full h-2">
-                    <div 
-                      className={`h-2 rounded-full ${stats.pm25 > 35 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                      style={{ width: `${Math.min(100, (stats.pm25 / 70) * 100)}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    PM2.5 particles can penetrate deep into lungs and enter the blood system.
-                  </p>
-                </div>
-
-                {/* PM 10 */}
-                <div className="glass-panel p-6 border-slate-800/80 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center space-x-2 text-emerald-400">
-                      <WindIcon className="w-5 h-5" />
-                      <h3 className="font-bold text-sm text-slate-200">Coarse Particulate (PM10)</h3>
-                    </div>
-                    <span className="text-xs text-slate-400 font-medium">SAFETY LIMIT: 150.0 µg/m³</span>
-                  </div>
-                  <div className="flex items-baseline space-x-2">
-                    <span className="text-4xl font-black text-white">{stats.pm10}</span>
-                    <span className="text-xs text-slate-400">µg/m³</span>
-                  </div>
-                  {/* Progress bar */}
-                  <div className="w-full bg-slate-950 rounded-full h-2">
-                    <div 
-                      className={`h-2 rounded-full ${stats.pm10 > 150 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                      style={{ width: `${Math.min(100, (stats.pm10 / 250) * 100)}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    PM10 particles include dust, pollen, and mold fragments.
-                  </p>
-                </div>
-
-              </div>
-            )}
-
-            {/* Historical Air Records */}
-            {history.length > 0 && (
-              <div className="glass-panel p-6 border-slate-800 space-y-4">
-                <h3 className="font-bold text-lg text-white">Historical Pollution Log</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-slate-400">
-                        <th className="py-2.5">Date / Time</th>
-                        <th className="py-2.5">AQI</th>
-                        <th className="py-2.5">PM2.5</th>
-                        <th className="py-2.5">PM10</th>
-                        <th className="py-2.5">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.slice(0, 5).map((record, index) => (
-                        <tr key={index} className="border-b border-slate-900/60 hover:bg-slate-900/40 text-slate-300">
-                          <td className="py-2.5">{new Date(record.timestamp).toLocaleString()}</td>
-                          <td className={`py-2.5 font-bold ${getAqiConfig(record.aqi).color.split(' ')[0]}`}>{record.aqi}</td>
-                          <td className="py-2.5">{record.pm25} µg/m³</td>
-                          <td className="py-2.5">{record.pm10} µg/m³</td>
-                          <td className="py-2.5">
-                            <span className={`px-2 py-0.5 rounded text-[10px] ${getAqiConfig(record.aqi).color}`}>
-                              {getAqiConfig(record.aqi).label}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-          </div>
-
-          {/* Right Sidebar (1 Col): Profile Form & Alerts */}
-          <div className="space-y-8">
-            
-            {/* Health Profile Card */}
-            <div className="glass-panel p-6 border-slate-800 space-y-4">
-              <div className="flex items-center space-x-2 text-emerald-400 pb-3 border-b border-slate-850">
-                <UserCheck className="w-5 h-5" />
-                <h3 className="font-bold text-lg text-white font-sans">Your Health Profile</h3>
-              </div>
-
-              {profileSuccess && (
-                <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg text-emerald-400 text-xs font-semibold">
-                  {profileSuccess}
-                </div>
-              )}
-
-              <form onSubmit={handleUpdateProfile} className="space-y-4 text-left">
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 tracking-wider">USER AGE</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="120"
-                    value={age}
-                    onChange={(e) => setAge(parseInt(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between py-2 border-y border-slate-900">
-                  <div>
-                    <label className="text-xs font-bold text-slate-200">Asthma History</label>
-                    <div className="text-[10px] text-slate-400">Increase triggers susceptibility</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={asthmaHistory}
-                    onChange={(e) => setAsthmaHistory(e.target.checked)}
-                    className="w-4 h-4 text-emerald-600 bg-slate-950 border-slate-800 rounded focus:ring-emerald-500"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 tracking-wider">ALLERGY TYPE</label>
-                  <select
-                    value={allergyType}
-                    onChange={(e) => setAllergyType(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="None">No Active Allergy</option>
-                    <option value="Pollen">Pollen Allergy</option>
-                    <option value="Dust">Dust &amp; Particulates</option>
-                    <option value="Mold">Spore / Mold Allergies</option>
-                    <option value="Sulfur">Industrial SO2 Smog</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 tracking-wider">SENSITIVITY LEVEL</label>
-                  <select
-                    value={sensitivityLevel}
-                    onChange={(e) => setSensitivityLevel(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg py-2 px-3 text-slate-200 text-xs focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="LOW">Low Sensitivity</option>
-                    <option value="MEDIUM">Medium / Moderate</option>
-                    <option value="HIGH">High Sensitivity</option>
-                  </select>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={updatingProfile}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-emerald-400 hover:text-emerald-300 font-bold border border-slate-800 py-2.5 rounded-lg text-xs transition-colors flex items-center justify-center space-x-2"
-                >
-                  {updatingProfile ? 'Recalculating Risk...' : 'Update Health Profile'}
-                </button>
-              </form>
+              <AQIGauge aqi={stats.aqi} />
+              <p className="text-xs text-slate-500 mt-3">Last updated: {stats.timestamp ? new Date(stats.timestamp).toLocaleTimeString() : 'Just now'}</p>
             </div>
 
-            {/* Active Medical Alerts Card */}
-            <div className="glass-panel p-6 border-slate-800 space-y-4">
-              <div className="flex items-center space-x-2 text-emerald-400 pb-3 border-b border-slate-850">
-                <Bell className="w-5 h-5" />
-                <h3 className="font-bold text-lg text-white font-sans">Active Health Warnings</h3>
+            {/* Health Risk Panel */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-slate-400 mb-3 flex items-center space-x-1">
+                <Heart className="w-4 h-4 text-rose-400" />
+                <span>Your Health Risk</span>
+              </h3>
+              <RiskBadge level={stats.risk_level || 'MEDIUM'} />
+              <div className="mt-3">
+                <div className="flex justify-between text-xs text-slate-500 mb-1">
+                  <span>Risk Score</span>
+                  <span className="text-white font-bold">{stats.risk_score || 0}/100</span>
+                </div>
+                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${stats.risk_score || 0}%`,
+                      backgroundColor: stats.risk_score > 75 ? '#ef4444' : stats.risk_score > 50 ? '#f97316' : stats.risk_score > 25 ? '#f59e0b' : '#10b981',
+                    }}
+                  />
+                </div>
               </div>
-              
-              <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-                {alerts.length > 0 ? (
-                  alerts.slice(0, 3).map((alert, idx) => (
-                    <div key={idx} className="bg-slate-950/60 border border-slate-900 p-3.5 rounded-xl space-y-1 text-left text-xs">
-                      <div className="flex justify-between items-center text-[10px] text-slate-500">
-                        <span>CRITICAL NOTIFICATION</span>
-                        <span>{new Date(alert.timestamp).toLocaleDateString()}</span>
-                      </div>
-                      <p className="text-slate-300 leading-relaxed font-light">{alert.message}</p>
-                    </div>
-                  ))
+              {asthmaHistory && (
+                <div className="mt-3 flex items-center space-x-2 text-xs text-amber-400 bg-amber-950/30 rounded-lg px-2 py-1.5 border border-amber-900/30">
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                  <span>Asthma profile active — personalized risk calculated</span>
+                </div>
+              )}
+            </div>
+
+            {/* Weather Panel */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-slate-400 mb-3 flex items-center space-x-1">
+                <Sparkles className="w-4 h-4 text-sky-400" />
+                <span>Weather Conditions</span>
+              </h3>
+              <div className="grid grid-cols-3 gap-2">
+                <WeatherCard icon={Thermometer} label="Temp" value={`${stats.temperature || '--'}°C`} color="text-orange-400" />
+                <WeatherCard icon={Droplets} label="Humidity" value={`${stats.humidity || '--'}%`} color="text-blue-400" />
+                <WeatherCard icon={WindIcon} label="Wind" value={`${stats.windSpeed || '--'} km/h`} color="text-teal-400" />
+              </div>
+              <div className="mt-3 text-xs text-slate-500 flex items-center space-x-1">
+                <Activity className="w-3 h-3" />
+                <span>Conditions affect pollutant dispersion</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Pollutant Cards Row */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-slate-400 mb-4">Pollutant Levels</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <PollutantCard label="PM2.5" value={stats.pm25 || 0} unit="μg/m³" max={200} color="#10b981" />
+              <PollutantCard label="PM10" value={stats.pm10 || 0} unit="μg/m³" max={400} color="#f59e0b" />
+              <PollutantCard label="CO" value={(stats.co || 0.4)} unit="mg/m³" max={10} color="#ef4444" />
+              <PollutantCard label="NO2" value={stats.no2 || 12} unit="μg/m³" max={200} color="#8b5cf6" />
+              <PollutantCard label="SO2" value={stats.so2 || 4.5} unit="μg/m³" max={100} color="#06b6d4" />
+              <PollutantCard label="O3" value={stats.o3 || 65} unit="μg/m³" max={200} color="#f97316" />
+            </div>
+          </div>
+
+          {/* Charts Row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* AQI History Chart */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-slate-400 mb-4 flex items-center space-x-1">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                <span>AQI History</span>
+              </h3>
+              <div className="h-48">
+                {history.length > 0 ? (
+                  <Line data={histChartData} options={chartOpts} />
                 ) : (
-                  <div className="text-center py-6 text-slate-500 text-xs">
-                    No active warnings. Air indexes are within healthy bands.
+                  <div className="flex items-center justify-center h-full text-slate-600 text-sm">
+                    Collecting history data...
                   </div>
                 )}
               </div>
             </div>
 
+            {/* Forecast Chart */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-slate-400 mb-4 flex items-center space-x-1">
+                <TrendingUp className="w-4 h-4 text-purple-400" />
+                <span>12-Hour AQI Forecast</span>
+              </h3>
+              <div className="h-48">
+                {forecastChartData ? (
+                  <Line data={forecastChartData} options={chartOpts} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-slate-600 text-sm">
+                    Loading forecast...
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-        </div>
+          {/* Pollutant Bar Chart */}
+          {pollutantBarData && (
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-slate-400 mb-4">Pollutant Comparison</h3>
+              <div className="h-40">
+                <Bar data={pollutantBarData} options={{ ...chartOpts, plugins: { ...chartOpts.plugins, legend: { display: false } } }} />
+              </div>
+            </div>
+          )}
+
+          {/* Alerts */}
+          {alerts.length > 0 && (
+            <div className="bg-red-950/20 border border-red-900/30 rounded-2xl p-5">
+              <h3 className="text-sm font-semibold text-red-400 mb-3 flex items-center space-x-1">
+                <Bell className="w-4 h-4" />
+                <span>Health Alerts ({alerts.length})</span>
+              </h3>
+              <div className="space-y-2">
+                {alerts.slice(0, 3).map((alert, i) => (
+                  <div key={i} className="flex items-start space-x-2 text-sm text-slate-300 bg-slate-900/60 rounded-xl px-3 py-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <span>{alert.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
+      {/* Health Profile Section */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden">
+        <button
+          onClick={() => setShowProfile(!showProfile)}
+          className="w-full flex items-center justify-between p-5 hover:bg-slate-800/30 transition-colors"
+        >
+          <h3 className="text-sm font-semibold text-slate-300 flex items-center space-x-2">
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+            <span>Update Health Profile</span>
+          </h3>
+          {showProfile ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+        </button>
+        {showProfile && (
+          <form onSubmit={handleUpdateProfile} className="px-5 pb-5 space-y-4 border-t border-slate-800 pt-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Age</label>
+                <input
+                  type="number" min="1" max="120"
+                  value={age}
+                  onChange={e => setAge(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700/60"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Allergy Type</label>
+                <select
+                  value={allergyType}
+                  onChange={e => setAllergyType(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700/60"
+                >
+                  {['None', 'Dust', 'Pollen', 'Mold', 'Pet Dander', 'Chemical', 'Multiple'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Sensitivity Level</label>
+                <select
+                  value={sensitivityLevel}
+                  onChange={e => setSensitivityLevel(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-2 text-sm outline-none focus:border-emerald-700/60"
+                >
+                  {['LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH'].map(opt => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center space-x-3">
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={asthmaHistory}
+                    onChange={e => setAsthmaHistory(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  <span className="ml-3 text-sm text-slate-300">Asthma / Respiratory History</span>
+                </label>
+              </div>
+            </div>
+            {profileSuccess && (
+              <div className="flex items-center space-x-2 text-emerald-400 text-sm bg-emerald-950/30 border border-emerald-900/30 rounded-xl px-3 py-2">
+                <CheckCircle className="w-4 h-4" />
+                <span>{profileSuccess}</span>
+              </div>
+            )}
+            <button
+              type="submit"
+              disabled={updatingProfile}
+              className="px-5 py-2 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors"
+            >
+              {updatingProfile ? 'Saving...' : 'Save Profile'}
+            </button>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
-
-export default DashboardPage;

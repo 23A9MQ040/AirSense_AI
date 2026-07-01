@@ -1,257 +1,493 @@
-import os
+"""
+AirSense AI — Full Multi-Agent Workflow
+Google ADK-based pipeline with 4 agents, security checkpoint, and ctx.state
+
+Agents:
+  1. AirQualityMonitoringAgent  — collects live AQI data
+  2. HealthRiskPredictionAgent  — predicts user health risk
+  3. AIHealthAssistantAgent     — conversational AI responses
+  4. NotificationAgent          — generates alerts
+
+Security:
+  - security_checkpoint()  — PII detection + prompt injection detection + audit logging
+
+Usage:
+  python agents_workflow.py <city> <asthma_history> "<user_query>"
+"""
+
 import sys
-import asyncio
-import sqlite3
 import json
 import re
+import os
+import asyncio
+import sqlite3
 from datetime import datetime
-from typing import Generator, Any, Optional
+from typing import Any
 
-# Add the project root to path just in case
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# ─────────────────────────────────────────────────────────────────
+# Import Google ADK
+# ─────────────────────────────────────────────────────────────────
+try:
+    from google.adk.agents import LlmAgent, SequentialAgent
+    from google.adk.sessions import InMemorySessionService
+    from google.adk.runners import Runner
+    from google.adk import types
+    ADK_AVAILABLE = True
+except ImportError:
+    ADK_AVAILABLE = False
 
-from google.adk import Workflow, Context, Runner
-from google.adk.agents import LlmAgent
-from google.adk.tools.agent_tool import AgentTool
-from google.adk.tools.mcp_tool import McpToolset, StdioConnectionParams
-from google.adk.sessions.in_memory_session_service import InMemorySessionService
-from google.adk.workflow._base_node import START
-from google.genai.types import Content, Part
-from mcp import StdioServerParameters
+# ─────────────────────────────────────────────────────────────────
+# Import native tool implementations
+# ─────────────────────────────────────────────────────────────────
+from tools_impl import (
+    get_air_quality,
+    predict_health_risk,
+    generate_health_recommendation,
+    weather_analysis,
+    emergency_alert,
+)
 
-# Initialize SQLite database for Audit Logs
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "airsense_audit.db"))
+# ─────────────────────────────────────────────────────────────────
+# Audit Database
+# ─────────────────────────────────────────────────────────────────
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airsense_audit.db")
 
 def init_audit_db():
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS audit_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            request TEXT,
+            user_input TEXT,
             security_status TEXT,
-            timestamp TEXT
+            agent_action TEXT,
+            timestamp TEXT,
+            threat_level TEXT
         )
     """)
     conn.commit()
     conn.close()
 
-def log_audit(user_id: str, status: str, request: str):
+def log_audit(user_input: str, security_status: str, agent_action: str, threat_level: str = "NONE"):
     try:
         conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO audit_logs (user_id, request, security_status, timestamp) VALUES (?, ?, ?, ?)",
-            (user_id, request, status, datetime.now().isoformat())
-        )
+        conn.execute("""
+            INSERT INTO audit_logs (user_input, security_status, agent_action, timestamp, threat_level)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_input[:500], security_status, agent_action, datetime.now().isoformat(), threat_level))
         conn.commit()
         conn.close()
-    except Exception as e:
-        print(f"Audit log writing error: {e}", file=sys.stderr)
+    except Exception:
+        pass  # never fail on audit
 
-# PII Detection and Prompt Injection Detection
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
-
-INJECTION_KEYWORDS = [
-    "ignore previous instructions", 
-    "system override", 
-    "override rules", 
-    "developer mode", 
-    "bypass security", 
-    "show system prompt"
+# ─────────────────────────────────────────────────────────────────
+# Security Checkpoint
+# ─────────────────────────────────────────────────────────────────
+INJECTION_PATTERNS = [
+    r"ignore (previous|prior|all) instructions",
+    r"show (system|base|hidden) prompt",
+    r"bypass (security|filter|restriction)",
+    r"you are now",
+    r"pretend (to be|you are)",
+    r"act as (a|an|the) (unrestricted|uncensored|evil|hacker)",
+    r"jailbreak",
+    r"disregard (your|all) (instructions|rules|guidelines)",
+    r"sudo (mode|override)",
+    r"<script[\s\S]*?>",
+    r"(DROP|DELETE|INSERT|UPDATE|SELECT)\s+\w+",
 ]
 
-def contains_pii(text: str) -> bool:
-    return bool(EMAIL_REGEX.search(text) or PHONE_REGEX.search(text))
+PII_PATTERNS = [
+    (r'\b[\w.+-]+@[\w-]+\.\w{2,}\b', "EMAIL"),
+    (r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', "PHONE"),
+    (r'\b\d{3}-\d{2}-\d{4}\b', "SSN"),
+    (r'\b(?:\d[ -]?){13,16}\b', "CREDIT_CARD"),
+    (r'\b\d{5}(?:-\d{4})?\b', "ZIP_CODE"),
+]
 
-def redact_pii(text: str) -> str:
-    redacted = EMAIL_REGEX.sub("[EMAIL]", text)
-    redacted = PHONE_REGEX.sub("[PHONE]", redacted)
-    return redacted
+def mask_pii(text: str) -> tuple[str, list[str]]:
+    """Detect and mask PII in user input."""
+    masked = text
+    found_pii = []
+    for pattern, label in PII_PATTERNS:
+        if re.search(pattern, masked, re.IGNORECASE):
+            found_pii.append(label)
+            masked = re.sub(pattern, f"[{label}_REDACTED]", masked, flags=re.IGNORECASE)
+    return masked, found_pii
 
-def contains_injection(text: str) -> bool:
-    text_lower = text.lower()
-    return any(keyword in text_lower for keyword in INJECTION_KEYWORDS)
+def detect_injection(text: str) -> tuple[bool, str]:
+    """Detect prompt injection attempts."""
+    lower = text.lower()
+    for pattern in INJECTION_PATTERNS:
+        if re.search(pattern, lower, re.IGNORECASE):
+            return True, f"Matched pattern: {pattern}"
+    return False, ""
 
-# ----------------- Workflow Nodes -----------------
-
-def security_checkpoint(ctx: Context, node_input: str):
+def security_checkpoint(user_input: str) -> dict:
     """
-    Mandatory Security Checkpoint Node.
-    Analyzes input for PII or prompt injection.
+    Run all security checks before agent pipeline.
+    Returns: {passed: bool, sanitized_input: str, threats: list, pii: list}
     """
-    user_id = ctx.user_id or "anonymous_user"
-    
-    # 1. Check for prompt injection
-    if contains_injection(node_input):
-        log_audit(user_id, "BLOCKED_INJECTION", node_input)
-        ctx.route = "fail"
-        return "BLOCKED_INJECTION"
-        
-    # 2. Check for PII
-    if contains_pii(node_input):
-        redacted = redact_pii(node_input)
-        log_audit(user_id, "PII_REDACTED", redacted)
-        ctx.state["latest_input"] = redacted
-        ctx.route = "pass"
-        return redacted
-
-    # 3. Passed validation
-    log_audit(user_id, "PASSED", node_input)
-    ctx.state["latest_input"] = node_input
-    ctx.route = "pass"
-    return node_input
-
-def block_response(ctx: Context, node_input: str):
-    """
-    Handler for security violation blocks.
-    """
-    return "SECURITY BLOCK: Your request was blocked by the security checkpoint due to policy violations (prompt injection detected)."
-
-# ----------------- Tool Setup -----------------
-from tools_impl import get_air_quality, predict_health_risk, generate_health_recommendation, weather_analysis, emergency_alert
-
-# ----------------- Agent Definitions -----------------
-
-# 1. AirQualityMonitoringAgent
-air_quality_agent = LlmAgent(
-    name="AirQualityMonitoringAgent",
-    model="gemini-2.5-flash",
-    instruction=(
-        "You are the Air Quality Monitoring Agent. Your responsibility is to fetch real-time air quality data "
-        "for the requested city. Use the get_air_quality tool. Once you get the air quality data, store the "
-        "following keys in ctx.state:\n"
-        "- 'aqi_level': the integer AQI value\n"
-        "- 'pm25_level': PM2.5 concentration\n"
-        "- 'pm10_level': PM10 concentration\n"
-        "- 'city_name': name of the city\n"
-        "After fetching and saving, output a short summary of the air quality status."
-    ),
-    tools=[get_air_quality]
-)
-
-# 2. HealthRiskPredictionAgent
-health_risk_agent = LlmAgent(
-    name="HealthRiskPredictionAgent",
-    model="gemini-2.5-flash",
-    instruction=(
-        "You are the Health Risk Prediction Agent. Your responsibility is to analyze the user's health profile "
-        "(age, asthma history, allergies, sensitivity) in conjunction with the air quality data stored in ctx.state. "
-        "Use the predict_health_risk tool to run the predictive model. Once you receive the results, save:\n"
-        "- 'risk_level': LOW, MEDIUM, or HIGH\n"
-        "- 'risk_score': numeric risk score\n"
-        "in ctx.state. Provide a brief explanation of the primary health risks."
-    ),
-    tools=[predict_health_risk]
-)
-
-# 3. AIHealthAssistantAgent
-health_assistant_agent = LlmAgent(
-    name="AIHealthAssistantAgent",
-    model="gemini-2.5-flash",
-    instruction=(
-        "You are the AirSense Assistant. Your role is to answer user queries about their health risk "
-        "and explain pollution impacts. Use the generate_health_recommendation tool to retrieve personalized "
-        "advice. Synthesize your final response using this advice, the user profile, and the AQI stats. "
-        "Use the AgentTools to query AirQualityMonitoringAgent and HealthRiskPredictionAgent if you need fresh data."
-    ),
-    tools=[generate_health_recommendation, AgentTool(agent=air_quality_agent), AgentTool(agent=health_risk_agent)]
-)
-
-# 4. NotificationAgent
-notification_agent = LlmAgent(
-    name="NotificationAgent",
-    model="gemini-2.5-flash",
-    instruction=(
-        "You are the Notification Agent. Review the risk_level and health profile in ctx.state. "
-        "If risk_level is HIGH, use the emergency_alert tool to fetch actions. Prepare a clear alert message "
-        "and save it in ctx.state under 'alerts' as a list. Summarize the active warning notifications."
-    ),
-    tools=[emergency_alert]
-)
-
-# ----------------- Workflow Definition -----------------
-
-workflow = Workflow(
-    name="airsense_pipeline",
-    edges=[
-        (START, security_checkpoint),
-        (security_checkpoint, {
-            "pass": air_quality_agent,
-            "fail": block_response
-        }),
-        (air_quality_agent, health_risk_agent),
-        (health_risk_agent, health_assistant_agent),
-        (health_assistant_agent, notification_agent)
-    ]
-)
-
-# ----------------- CLI Execution & Runner -----------------
-
-session_service = InMemorySessionService()
-runner = Runner(agent=workflow, session_service=session_service, app_name="AirSense", auto_create_session=True)
-
-async def run_pipeline(user_id: str, session_id: str, prompt: str, user_profile: dict):
-    # Initialize the session state with user profile
-    state_delta = {
-        "user_profile": user_profile,
-        "aqi_level": None,
-        "risk_level": "LOW",
-        "risk_score": 0.0,
-        "alerts": []
-    }
-    
-    new_msg = Content(parts=[Part.from_text(text=prompt)])
-    
-    print("\n--- Starting AirSense AI Agent Workflow Pipeline ---")
-    print(f"User Request: {prompt}")
-    
-    # We run the runner.run_async generator to stream events
-    async for event in runner.run_async(
-        user_id=user_id,
-        session_id=session_id,
-        new_message=new_msg,
-        state_delta=state_delta
-    ):
-        # We can print model output events or state transitions
-        if hasattr(event, "type") and event.type == "model_response":
-            print(f"\n[Agent: {event.agent_name}] -> {event.text}")
-        elif hasattr(event, "text") and event.text:
-            print(event.text, end="", flush=True)
-            
-    # Retrieve updated session state
-    session = await session_service.get_session(user_id=user_id, session_id=session_id, app_name="AirSense")
-    print("\n--- Pipeline Execution Completed ---")
-    print("Final Shared Context State (ctx.state):")
-    print(json.dumps(session.state, indent=2))
-    return session.state
-
-def main():
     init_audit_db()
-    if len(sys.argv) < 3:
-        print("Usage: python agents_workflow.py <city> <has_asthma_true_or_false> [query]")
-        print("Example: python agents_workflow.py Delhi True 'Can I run outside today?'")
-        sys.exit(1)
-        
-    city = sys.argv[1]
-    has_asthma = sys.argv[2].lower() == "true"
-    query = sys.argv[3] if len(sys.argv) > 3 else f"Evaluate air quality in {city}"
+    threats = []
     
-    user_profile = {
-        "age": 28,
-        "asthmaHistory": has_asthma,
-        "allergyType": "Pollen",
-        "sensitivityLevel": "High" if has_asthma else "Medium"
+    # Injection detection
+    is_injection, reason = detect_injection(user_input)
+    if is_injection:
+        threats.append({"type": "PROMPT_INJECTION", "detail": reason})
+        log_audit(user_input, "BLOCKED", "security_checkpoint", "HIGH")
+        return {
+            "passed": False,
+            "sanitized_input": user_input,
+            "threats": threats,
+            "pii": [],
+            "message": "⛔ Request blocked: Potential prompt injection detected."
+        }
+    
+    # PII detection + masking
+    sanitized, pii_found = mask_pii(user_input)
+    if pii_found:
+        threats.append({"type": "PII_DETECTED", "detail": pii_found})
+    
+    status = "PII_MASKED" if pii_found else "CLEAN"
+    log_audit(user_input, status, "security_checkpoint", "LOW" if pii_found else "NONE")
+    
+    return {
+        "passed": True,
+        "sanitized_input": sanitized,
+        "threats": threats,
+        "pii": pii_found,
+        "message": "Security check passed."
+    }
+
+# ─────────────────────────────────────────────────────────────────
+# Agent Functions (Native ADK-compatible tool wrappers)
+# ─────────────────────────────────────────────────────────────────
+def adk_get_air_quality(city: str) -> dict:
+    """Tool for AirQualityMonitoringAgent: Get real-time AQI data for a city."""
+    return get_air_quality(city)
+
+def adk_predict_health_risk(city: str, asthma_history: bool, age: int = 30, activity_level: str = "moderate") -> dict:
+    """Tool for HealthRiskPredictionAgent: Predict health risk based on AQI and user profile."""
+    return predict_health_risk(city, asthma_history, age, activity_level)
+
+def adk_generate_recommendation(city: str, asthma_history: bool) -> dict:
+    """Tool for AIHealthAssistantAgent: Generate personalized health recommendations."""
+    return generate_health_recommendation(city, asthma_history)
+
+def adk_weather_analysis(city: str) -> dict:
+    """Tool for AirQualityMonitoringAgent: Get weather conditions that affect air quality."""
+    return weather_analysis(city)
+
+def adk_emergency_alert(city: str, asthma_history: bool) -> dict:
+    """Tool for NotificationAgent: Determine if emergency alert is needed based on AQI."""
+    return emergency_alert(city, asthma_history)
+
+# ─────────────────────────────────────────────────────────────────
+# Full ADK Multi-Agent Pipeline
+# ─────────────────────────────────────────────────────────────────
+APP_NAME = "airsense_ai"
+MODEL = "gemini-2.5-flash"
+
+async def run_adk_pipeline(city: str, asthma_history: bool, user_query: str) -> dict:
+    """Run the full 4-agent ADK pipeline."""
+    if not ADK_AVAILABLE:
+        raise ImportError("google-adk not installed")
+    
+    session_service = InMemorySessionService()
+    
+    # Shared context state
+    session = await session_service.create_session(
+        app_name=APP_NAME,
+        user_id="system",
+        session_id="pipeline_session",
+        state={
+            "city": city,
+            "asthma_history": asthma_history,
+            "user_query": user_query,
+        }
+    )
+    
+    # Agent 1: AirQualityMonitoringAgent
+    air_quality_agent = LlmAgent(
+        name="AirQualityMonitoringAgent",
+        model=MODEL,
+        description="Collects real-time air quality data and weather conditions.",
+        instruction=f"""You are the AirQualityMonitoringAgent for AirSense AI.
+Your task:
+1. Use the adk_get_air_quality tool to fetch AQI data for {city}
+2. Use the adk_weather_analysis tool to get weather conditions
+3. Store key findings in your response as JSON
+
+City to monitor: {city}
+Provide a concise JSON summary of: aqi, pm25, pm10, weather, and aqi_category.""",
+        tools=[adk_get_air_quality, adk_weather_analysis],
+    )
+    
+    # Agent 2: HealthRiskPredictionAgent
+    health_risk_agent = LlmAgent(
+        name="HealthRiskPredictionAgent",
+        model=MODEL,
+        description="Analyzes user health profile and predicts personalized health risk.",
+        instruction=f"""You are the HealthRiskPredictionAgent for AirSense AI.
+Your task:
+1. Use adk_predict_health_risk to evaluate health risk
+2. Consider asthma_history={asthma_history} in your analysis
+3. Provide risk level (LOW/MEDIUM/HIGH) with explanation
+
+City: {city}, Asthma History: {asthma_history}
+Provide concise risk assessment JSON: risk_level, risk_score, explanation.""",
+        tools=[adk_predict_health_risk],
+    )
+    
+    # Agent 3: AIHealthAssistantAgent
+    assistant_agent = LlmAgent(
+        name="AIHealthAssistantAgent",
+        model=MODEL,
+        description="Conversational AI assistant that answers health questions about air quality.",
+        instruction=f"""You are the AIHealthAssistantAgent for AirSense AI — a friendly, expert health assistant.
+Your task:
+1. Use adk_generate_recommendation to get personalized advice
+2. Answer the user's question: "{user_query}"
+3. Provide clear, actionable health guidance
+
+Consider: City={city}, Asthma={asthma_history}
+Be compassionate, clear, and helpful. Include specific recommendations.""",
+        tools=[adk_generate_recommendation],
+    )
+    
+    # Agent 4: NotificationAgent
+    notification_agent = LlmAgent(
+        name="NotificationAgent",
+        model=MODEL,
+        description="Generates health alerts and notifications based on AQI levels.",
+        instruction=f"""You are the NotificationAgent for AirSense AI.
+Your task:
+1. Use adk_emergency_alert to check if an emergency alert is needed
+2. Generate appropriate notification message
+3. Determine alert severity level
+
+City: {city}, Asthma History: {asthma_history}
+Provide alert JSON: alert_needed, severity, message, actions.""",
+        tools=[adk_emergency_alert],
+    )
+    
+    # Sequential pipeline
+    pipeline = SequentialAgent(
+        name="AirSensePipeline",
+        sub_agents=[air_quality_agent, health_risk_agent, assistant_agent, notification_agent],
+        description="Full AirSense AI processing pipeline",
+    )
+    
+    runner = Runner(
+        agent=pipeline,
+        app_name=APP_NAME,
+        session_service=session_service,
+    )
+    
+    # Run
+    content = types.Content(role="user", parts=[types.Part(text=user_query)])
+    final_response = ""
+    async for event in runner.run_async(
+        user_id="system",
+        session_id="pipeline_session",
+        new_message=content,
+    ):
+        if hasattr(event, "is_final_response") and event.is_final_response():
+            if event.content and event.content.parts:
+                final_response = event.content.parts[0].text
+    
+    return {
+        "response": final_response,
+        "pipeline": "AirSensePipeline",
+        "agents": ["AirQualityMonitoringAgent", "HealthRiskPredictionAgent", "AIHealthAssistantAgent", "NotificationAgent"],
+        "city": city,
+        "asthma_history": asthma_history,
+    }
+
+# ─────────────────────────────────────────────────────────────────
+# Fallback: Native (non-ADK) pipeline for environments w/o ADK
+# ─────────────────────────────────────────────────────────────────
+def run_native_pipeline(city: str, asthma_history: bool, user_query: str) -> dict:
+    """Fallback: Run the agent pipeline using native tool calls + Gemini API."""
+    try:
+        import google.generativeai as genai
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set")
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+    except Exception as e:
+        return run_mock_pipeline(city, asthma_history, user_query, str(e))
+    
+    # Step 1: AirQualityMonitoringAgent
+    aq_data = get_air_quality(city)
+    weather_data = weather_analysis(city)
+    
+    # Step 2: HealthRiskPredictionAgent
+    risk_data = predict_health_risk(city, asthma_history, 30, "moderate")
+    
+    # Step 3: Generate recommendations
+    rec_data = generate_health_recommendation(city, asthma_history)
+    
+    # Step 4: NotificationAgent
+    alert_data = emergency_alert(city, asthma_history)
+    
+    # ctx.state simulation
+    ctx_state = {
+        "aqi_level": aq_data.get("aqi", 0),
+        "city": city,
+        "pm25": aq_data.get("pm25", 0),
+        "risk_score": risk_data.get("risk_score", 0),
+        "risk_level": risk_data.get("risk_level", "UNKNOWN"),
+        "asthma_history": asthma_history,
     }
     
-    asyncio.run(run_pipeline(
-        user_id="user_123",
-        session_id="session_456",
-        prompt=f"City: {city}. Query: {query}",
-        user_profile=user_profile
-    ))
+    # AIHealthAssistantAgent — answer user question with context
+    aqi = aq_data.get("aqi", 0)
+    risk_level = risk_data.get("risk_level", "UNKNOWN")
+    temp = weather_data.get("temperature", "N/A")
+    humidity = weather_data.get("humidity", "N/A")
+    recommendations = rec_data.get("recommendations", [])
+    alert_needed = alert_data.get("alert_needed", False)
+    
+    prompt = f"""You are AirSense Assistant — an expert AI health advisor specializing in air quality and respiratory health.
+
+CURRENT ENVIRONMENTAL DATA (from AirQualityMonitoringAgent):
+- City: {city}
+- AQI: {aqi} ({aq_category(aqi)})
+- PM2.5: {aq_data.get('pm25', 'N/A')} μg/m³
+- PM10: {aq_data.get('pm10', 'N/A')} μg/m³
+- Temperature: {temp}°C
+- Humidity: {humidity}%
+- Weather: {weather_data.get('condition', 'N/A')}
+
+HEALTH RISK ASSESSMENT (from HealthRiskPredictionAgent):
+- Risk Level: {risk_level}
+- Risk Score: {risk_data.get('risk_score', 'N/A')}/100
+- User Asthma History: {asthma_history}
+- Risk Explanation: {risk_data.get('explanation', 'N/A')}
+
+RECOMMENDATIONS (from RecommendationAgent):
+{chr(10).join(f'• {r}' for r in recommendations[:5])}
+
+ALERT STATUS (from NotificationAgent):
+- Emergency Alert: {"⚠️ YES" if alert_needed else "No"}
+- Alert Message: {alert_data.get('message', 'None')}
+
+USER QUESTION: {user_query}
+
+Instructions:
+- Answer the user's specific question clearly and empathetically
+- Use the environmental data above to give personalized advice
+- Be specific and actionable, not generic
+- If asthma history is true, give asthma-specific guidance
+- Format with clear paragraphs, no excessive bullet points
+- End with one specific actionable tip for today"""
+
+    try:
+        resp = model.generate_content(prompt)
+        assistant_response = resp.text
+    except Exception as e:
+        assistant_response = f"I'm having trouble connecting to the AI service right now. However, based on current data: AQI in {city} is {aqi} ({aq_category(aqi)}). {'; '.join(recommendations[:2]) if recommendations else 'Stay safe and monitor air quality.'}"
+    
+    return {
+        "response": assistant_response,
+        "pipeline": "NativePipeline",
+        "agents": ["AirQualityMonitoringAgent", "HealthRiskPredictionAgent", "AIHealthAssistantAgent", "NotificationAgent"],
+        "context_state": ctx_state,
+        "air_quality": aq_data,
+        "risk": risk_data,
+        "alert": alert_data,
+        "city": city,
+        "asthma_history": asthma_history,
+    }
+
+def run_mock_pipeline(city: str, asthma_history: bool, user_query: str, error: str = "") -> dict:
+    """Emergency mock pipeline when all else fails."""
+    mock_aqi = 95
+    mock_risk = "MEDIUM" if not asthma_history else "HIGH"
+    
+    response = f"""**AirSense AI — Offline Mode**
+
+I'm currently operating in limited mode due to a configuration issue.
+
+📍 **City:** {city}
+📊 **Estimated AQI:** ~{mock_aqi} (Moderate)
+🩺 **Health Risk:** {mock_risk}
+{'⚠️ **Asthma Alert:** As an asthma patient, carry your inhaler.' if asthma_history else ''}
+
+**For your question:** "{user_query}"
+
+Based on estimated moderate air quality levels:
+- If you're planning outdoor activities, consider checking a local weather app for the latest AQI
+- {'As an asthma patient, always carry your rescue inhaler.' if asthma_history else 'Healthy individuals can proceed with normal activities with caution.'}
+- Stay hydrated and limit strenuous outdoor activity during peak pollution hours (7-9 AM, 5-8 PM)
+
+*Note: Please ensure the GEMINI_API_KEY environment variable is set for AI-powered analysis.*"""
+    
+    return {
+        "response": response,
+        "pipeline": "MockPipeline",
+        "agents": [],
+        "error": error,
+        "city": city,
+    }
+
+def aq_category(aqi: int) -> str:
+    if aqi <= 50: return "Good"
+    if aqi <= 100: return "Moderate"
+    if aqi <= 150: return "Unhealthy for Sensitive Groups"
+    if aqi <= 200: return "Unhealthy"
+    if aqi <= 300: return "Very Unhealthy"
+    return "Hazardous"
+
+# ─────────────────────────────────────────────────────────────────
+# Main Entry Point
+# ─────────────────────────────────────────────────────────────────
+def main():
+    if len(sys.argv) < 4:
+        print(json.dumps({"error": "Usage: agents_workflow.py <city> <asthma_history> <query>"}))
+        sys.exit(1)
+    
+    city = sys.argv[1]
+    asthma_history = sys.argv[2].lower() in ("true", "1", "yes")
+    user_query = sys.argv[3]
+    
+    # Security checkpoint (runs before all agents)
+    sec_result = security_checkpoint(user_query)
+    if not sec_result["passed"]:
+        print(json.dumps({
+            "response": sec_result["message"],
+            "security": "BLOCKED",
+            "pipeline": "SecurityCheckpoint",
+        }))
+        sys.exit(0)
+    
+    # Use sanitized input
+    safe_query = sec_result["sanitized_input"]
+    pii_detected = bool(sec_result["pii"])
+    
+    # Run pipeline
+    result = None
+    
+    # Try ADK pipeline first, fall back to native
+    if ADK_AVAILABLE and os.environ.get("GEMINI_API_KEY"):
+        try:
+            result = asyncio.run(run_adk_pipeline(city, asthma_history, safe_query))
+        except Exception as e:
+            result = None
+    
+    if result is None:
+        result = run_native_pipeline(city, asthma_history, safe_query)
+    
+    # Add security metadata
+    result["security_checkpoint"] = {
+        "passed": True,
+        "pii_detected": pii_detected,
+        "threats_found": len(sec_result["threats"]),
+    }
+    
+    print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == "__main__":
     main()

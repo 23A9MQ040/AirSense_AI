@@ -1,37 +1,50 @@
-# Build stage
+# ─────────────────────────────────────────────────
+# Stage 1: Build the Spring Boot Application
+# ─────────────────────────────────────────────────
 FROM maven:3.9.6-eclipse-temurin-21-jammy AS build
+
 WORKDIR /app
+
+# Copy Maven config first (for layer caching)
 COPY backend-java/pom.xml .
-# Download dependencies first to cache them
-RUN mvn dependency:go-offline
+RUN mvn dependency:go-offline -q
+
+# Copy source code and build
 COPY backend-java/src ./src
-RUN mvn clean package -DskipTests
+RUN mvn clean package -DskipTests -q
 
-# Run stage
+# ─────────────────────────────────────────────────
+# Stage 2: Runtime — JRE + Python 3.11
+# ─────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre-jammy
-WORKDIR /app
 
-# Install Python and dependencies
+# Install Python 3.11 + pip
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Install python libraries required by ADK
-RUN pip3 install --break-system-packages \
+# Install Python AI dependencies
+RUN pip3 install --break-system-packages --no-cache-dir \
     google-adk \
     google-genai \
     mcp \
-    fastmcp
+    fastmcp \
+    python-dotenv
 
-# Copy the python agents directory
+WORKDIR /app
+
+# Copy agents-cli (Python agents and tools)
 COPY agents-cli /agents-cli
 
-# Copy built Spring Boot jar
+# Copy mcp-server
+COPY mcp-server /mcp-server
+
+# Copy the built Spring Boot JAR
 COPY --from=build /app/target/*.jar app.jar
 
-# Expose port
+# Expose port (Render uses PORT env var)
 EXPOSE 8080
 
 # Run Spring Boot

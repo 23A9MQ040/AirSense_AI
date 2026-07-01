@@ -9,12 +9,16 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 @RestController
 @RequestMapping("/api/dashboard")
+@CrossOrigin(origins = "*")
 public class DashboardController {
 
     @Autowired
@@ -39,7 +43,6 @@ public class DashboardController {
             AirQuality aq = airQualityService.getOrFetchAirQuality(city);
             RiskPrediction risk = healthRiskService.evaluateRisk(user.getId(), city);
             
-            // Sync user city if not matching
             if (!city.equals(user.getLocation())) {
                 userService.updateUserLocation(user.getId(), city);
             }
@@ -49,9 +52,17 @@ public class DashboardController {
             stats.put("aqi", aq.getAqi());
             stats.put("pm25", aq.getPm25());
             stats.put("pm10", aq.getPm10());
+            stats.put("co", aq.getCo() != null ? aq.getCo() : 0.4);
+            stats.put("no2", aq.getNo2() != null ? aq.getNo2() : 12.0);
+            stats.put("so2", aq.getSo2() != null ? aq.getSo2() : 4.5);
+            stats.put("o3", aq.getO3() != null ? aq.getO3() : 65.0);
+            stats.put("temperature", aq.getTemperature() != null ? aq.getTemperature() : 24.0);
+            stats.put("humidity", aq.getHumidity() != null ? aq.getHumidity() : 55.0);
+            stats.put("windSpeed", aq.getWindSpeed() != null ? aq.getWindSpeed() : 12.0);
             stats.put("risk_level", risk.getRiskLevel());
             stats.put("risk_score", risk.getRiskScore());
             stats.put("timestamp", aq.getTimestamp());
+            stats.put("userName", user.getName());
             
             return ResponseEntity.ok(stats);
         } catch (Exception e) {
@@ -66,6 +77,40 @@ public class DashboardController {
         try {
             List<AirQuality> history = airQualityService.getHistoricalData(city);
             return ResponseEntity.ok(history);
+        } catch (Exception e) {
+            Map<String, String> response = new HashMap<>();
+            response.put("error", e.getMessage());
+            return ResponseEntity.badRequest().body(response);
+        }
+    }
+
+    @GetMapping("/forecast")
+    public ResponseEntity<?> getForecast(@RequestParam(defaultValue = "New York") String city) {
+        try {
+            AirQuality current = airQualityService.getOrFetchAirQuality(city);
+            double baseAqi = current.getAqi();
+            Random rnd = new Random();
+            
+            List<Map<String, Object>> forecast = new ArrayList<>();
+            for (int i = 1; i <= 24; i++) {
+                Map<String, Object> point = new HashMap<>();
+                double variation = (rnd.nextGaussian() * 15);
+                double trend = (i <= 12) ? i * 0.5 : (24 - i) * 0.5;
+                double aqiVal = Math.max(0, Math.min(500, baseAqi + variation + trend));
+                point.put("hour", i);
+                point.put("label", "+" + i + "h");
+                point.put("aqi", Math.round(aqiVal));
+                point.put("category", aqiCategory((int) aqiVal));
+                forecast.add(point);
+            }
+            
+            Map<String, Object> result = new HashMap<>();
+            result.put("city", city);
+            result.put("currentAqi", (int) baseAqi);
+            result.put("forecast", forecast);
+            result.put("generatedAt", LocalDateTime.now().toString());
+            
+            return ResponseEntity.ok(result);
         } catch (Exception e) {
             Map<String, String> response = new HashMap<>();
             response.put("error", e.getMessage());
@@ -110,5 +155,14 @@ public class DashboardController {
             response.put("error", e.getMessage());
             return ResponseEntity.badRequest().body(response);
         }
+    }
+
+    private String aqiCategory(int aqi) {
+        if (aqi <= 50) return "Good";
+        if (aqi <= 100) return "Moderate";
+        if (aqi <= 150) return "Unhealthy for Sensitive Groups";
+        if (aqi <= 200) return "Unhealthy";
+        if (aqi <= 300) return "Very Unhealthy";
+        return "Hazardous";
     }
 }

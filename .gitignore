@@ -27,3 +27,15 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local JDK (not for version control)
+backend-java/jdk/
+backend-java/jdk.zip
+backend-java/jdk-*.zip
+
+# Audit DB (local only)
+agents-cli/airsense_audit.db
+
+# Python cache
+agents-cli/__pycache__/
+mcp-server/__pycache__/

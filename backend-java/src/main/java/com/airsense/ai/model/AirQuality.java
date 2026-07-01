@@ -30,13 +30,19 @@ public class AirQuality {
     
     private double pm10;
     
-    private double co;
+    private Double co;
     
-    private double no2;
+    private Double no2;
     
-    private double so2;
+    private Double so2;
     
-    private double o3;
+    private Double o3;
+    
+    private Double temperature;
+    
+    private Double humidity;
+    
+    private Double windSpeed;
     
     private double latitude;
     
