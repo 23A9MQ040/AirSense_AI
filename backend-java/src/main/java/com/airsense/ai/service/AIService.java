@@ -46,9 +46,9 @@ public class AIService {
         // Prepare command-line invocation
         // Determine script path absolute reference
         File scriptFile = new File(agentsScriptPath);
-        if (!scriptFile.isAbsolute()) {
-            // Try relative to workspace
-            scriptFile = new File("e:/AirSense_AI/agents-cli/agents_workflow.py");
+        if (!scriptFile.exists()) {
+            // If relative to working dir fails, try relative to /agents-cli (Docker)
+            scriptFile = new File("/agents-cli/agents_workflow.py");
         }
 
         if (!scriptFile.exists()) {

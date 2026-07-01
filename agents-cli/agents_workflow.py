@@ -110,23 +110,15 @@ def block_response(ctx: Context, node_input: str):
     """
     return "SECURITY BLOCK: Your request was blocked by the security checkpoint due to policy violations (prompt injection detected)."
 
-# ----------------- MCP Toolset Setup -----------------
-
-# Build connection parameters to run mcp_server.py via stdio
-server_script = os.path.abspath(os.path.join(os.path.dirname(__file__), "../mcp-server/mcp_server.py"))
-server_params = StdioServerParameters(
-    command="python",
-    args=[server_script],
-)
-conn_params = StdioConnectionParams(server_params=server_params)
-mcp_toolset = McpToolset(connection_params=conn_params)
+# ----------------- Tool Setup -----------------
+from tools_impl import get_air_quality, predict_health_risk, generate_health_recommendation, weather_analysis, emergency_alert
 
 # ----------------- Agent Definitions -----------------
 
 # 1. AirQualityMonitoringAgent
 air_quality_agent = LlmAgent(
     name="AirQualityMonitoringAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction=(
         "You are the Air Quality Monitoring Agent. Your responsibility is to fetch real-time air quality data "
         "for the requested city. Use the get_air_quality tool. Once you get the air quality data, store the "
@@ -137,13 +129,13 @@ air_quality_agent = LlmAgent(
         "- 'city_name': name of the city\n"
         "After fetching and saving, output a short summary of the air quality status."
     ),
-    tools=[mcp_toolset]
+    tools=[get_air_quality]
 )
 
 # 2. HealthRiskPredictionAgent
 health_risk_agent = LlmAgent(
     name="HealthRiskPredictionAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction=(
         "You are the Health Risk Prediction Agent. Your responsibility is to analyze the user's health profile "
         "(age, asthma history, allergies, sensitivity) in conjunction with the air quality data stored in ctx.state. "
@@ -152,32 +144,32 @@ health_risk_agent = LlmAgent(
         "- 'risk_score': numeric risk score\n"
         "in ctx.state. Provide a brief explanation of the primary health risks."
     ),
-    tools=[mcp_toolset]
+    tools=[predict_health_risk]
 )
 
 # 3. AIHealthAssistantAgent
 health_assistant_agent = LlmAgent(
     name="AIHealthAssistantAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction=(
         "You are the AirSense Assistant. Your role is to answer user queries about their health risk "
         "and explain pollution impacts. Use the generate_health_recommendation tool to retrieve personalized "
         "advice. Synthesize your final response using this advice, the user profile, and the AQI stats. "
         "Use the AgentTools to query AirQualityMonitoringAgent and HealthRiskPredictionAgent if you need fresh data."
     ),
-    tools=[mcp_toolset, AgentTool(agent=air_quality_agent), AgentTool(agent=health_risk_agent)]
+    tools=[generate_health_recommendation, AgentTool(agent=air_quality_agent), AgentTool(agent=health_risk_agent)]
 )
 
 # 4. NotificationAgent
 notification_agent = LlmAgent(
     name="NotificationAgent",
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     instruction=(
         "You are the Notification Agent. Review the risk_level and health profile in ctx.state. "
         "If risk_level is HIGH, use the emergency_alert tool to fetch actions. Prepare a clear alert message "
         "and save it in ctx.state under 'alerts' as a list. Summarize the active warning notifications."
     ),
-    tools=[mcp_toolset]
+    tools=[emergency_alert]
 )
 
 # ----------------- Workflow Definition -----------------
@@ -230,7 +222,7 @@ async def run_pipeline(user_id: str, session_id: str, prompt: str, user_profile:
             print(event.text, end="", flush=True)
             
     # Retrieve updated session state
-    session = await session_service.get_session(user_id=user_id, session_id=session_id)
+    session = await session_service.get_session(user_id=user_id, session_id=session_id, app_name="AirSense")
     print("\n--- Pipeline Execution Completed ---")
     print("Final Shared Context State (ctx.state):")
     print(json.dumps(session.state, indent=2))

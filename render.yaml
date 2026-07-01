@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: airsense-ai-backend
+    env: docker
+    dockerContext: .
+    dockerfilePath: ./backend-java/Dockerfile
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+    region: oregon
+    plan: free

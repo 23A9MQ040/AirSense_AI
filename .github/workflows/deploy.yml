@@ -81,7 +81,8 @@ jobs:
     - name: Build Backend Docker Image
       uses: docker/build-push-action@v5
       with:
-        context: ./backend-java
+        context: .
+        file: ./backend-java/Dockerfile
         push: false
         tags: airsense/backend:latest
 

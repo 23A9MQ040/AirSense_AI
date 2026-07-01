@@ -1,10 +1,10 @@
 # Build stage
 FROM maven:3.9.6-eclipse-temurin-21-jammy AS build
 WORKDIR /app
-COPY pom.xml .
+COPY backend-java/pom.xml .
 # Download dependencies first to cache them
 RUN mvn dependency:go-offline
-COPY src ./src
+COPY backend-java/src ./src
 RUN mvn clean package -DskipTests
 
 # Run stage
@@ -25,8 +25,11 @@ RUN pip3 install --break-system-packages \
     mcp \
     fastmcp
 
+# Copy the python agents directory
+COPY agents-cli /agents-cli
+
 # Copy built Spring Boot jar
-COPY --from=build /app/target/ai-1.0.0.jar app.jar
+COPY --from=build /app/target/*.jar app.jar
 
 # Expose port
 EXPOSE 8080
