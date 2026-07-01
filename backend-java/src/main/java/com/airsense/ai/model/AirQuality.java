@@ -38,5 +38,9 @@ public class AirQuality {
     
     private double o3;
     
+    private double latitude;
+    
+    private double longitude;
+    
     private LocalDateTime timestamp;
 }

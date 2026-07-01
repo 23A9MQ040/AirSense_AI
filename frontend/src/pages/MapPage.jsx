@@ -29,7 +29,9 @@ function MapPage() {
         aqi: cityName.toLowerCase().includes('delhi') ? 210 : (cityName.toLowerCase().includes('london') ? 52 : 75),
         pm25: cityName.toLowerCase().includes('delhi') ? 160.0 : (cityName.toLowerCase().includes('london') ? 12.0 : 24.0),
         pm10: cityName.toLowerCase().includes('delhi') ? 280.0 : (cityName.toLowerCase().includes('london') ? 22.0 : 45.0),
-        risk_level: cityName.toLowerCase().includes('delhi') ? 'HIGH' : 'LOW'
+        risk_level: cityName.toLowerCase().includes('delhi') ? 'HIGH' : 'LOW',
+        latitude: Math.random() * 140 - 70, // random lat between -70 and 70
+        longitude: Math.random() * 360 - 180 // random lon between -180 and 180
       };
       return mockData;
     }
@@ -83,14 +85,7 @@ function MapPage() {
     return 'bg-purple-600 text-purple-100';
   };
 
-  // Coordinates mapping for mock visual map
-  const mockCoordinates = {
-    'Delhi': { x: '68%', y: '55%', scale: 1.8 },
-    'London': { x: '45%', y: '30%', scale: 0.9 },
-    'New York': { x: '25%', y: '35%', scale: 1.1 },
-    'Beijing': { x: '78%', y: '40%', scale: 1.5 },
-    'Sydney': { x: '88%', y: '80%', scale: 0.8 }
-  };
+  // Removed mockCoordinates since we dynamically calculate coordinates now
 
   return (
     <div className="fade-in space-y-8 pb-10">
@@ -168,9 +163,17 @@ function MapPage() {
 
               {/* Hotspot Markers */}
               {cities.map((city, idx) => {
-                const coords = mockCoordinates[city] || { x: `${30 + (idx * 12) % 60}%`, y: `${30 + (idx * 8) % 50}%`, scale: 1.0 };
                 const data = cityData[city];
                 if (!data) return null;
+
+                // Dynamically project real GPS coordinates to flat map (Equirectangular)
+                const lat = data.latitude || (Math.sin(idx) * 60);
+                const lon = data.longitude || (Math.cos(idx) * 120);
+                const xPercent = ((lon + 180) / 360) * 100;
+                // Add slight vertical offset for map SVG styling alignment
+                const yPercent = ((90 - lat) / 180) * 100;
+                
+                const coords = { x: `${xPercent}%`, y: `${yPercent}%`, scale: 1.2 };
 
                 const value = activePollutant === 'pm25' ? data.pm25 : data.pm10;
                 // Determine size based on pollutant value
