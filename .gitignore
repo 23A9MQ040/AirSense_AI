@@ -1,0 +1,29 @@
+# Environment Variables
+.env
+.env.local
+
+# Node
+node_modules/
+dist/
+npm-debug.log
+
+# Java/Maven
+target/
+*.class
+*.jar
+*.war
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
