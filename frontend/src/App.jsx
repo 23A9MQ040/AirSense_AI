@@ -206,7 +206,7 @@ function Navigation() {
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter basename="/AirSense_AI">
         <div className="min-h-screen bg-slate-950 flex flex-col">
           <Navigation />
           
