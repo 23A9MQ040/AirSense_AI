@@ -37,6 +37,8 @@ jobs:
           npm ci
           
       - name: Build
+        env:
+          VITE_API_URL: https://airsense-ai-backend.onrender.com
         run: |
           cd frontend
           npm run build
