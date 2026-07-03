@@ -26,10 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip to avoid wheel compatibility issues
-RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip
 
 # Install Python AI dependencies
-RUN pip3 install --break-system-packages --no-cache-dir \
+RUN pip3 install --no-cache-dir \
     google-adk \
     google-genai \
     mcp \
