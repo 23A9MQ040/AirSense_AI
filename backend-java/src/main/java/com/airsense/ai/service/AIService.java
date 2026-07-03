@@ -13,8 +13,6 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Service
 public class AIService {
@@ -111,22 +109,52 @@ public class AIService {
                 return getMockResponse(city, query, profile, "ADK agent workflow exited with code: " + exitCode + ". Error: " + stderrStr);
             }
 
-            // Parse stdout to find JSON state block
-            Map<String, Object> state = parseJsonState(stdoutStr);
-            if (state == null) {
-                return getMockResponse(city, query, profile, "Failed to parse workflow state JSON from output: " + stdoutStr);
+            // Parse the pipeline JSON output (last JSON object on stdout)
+            Map<String, Object> pipelineResult = parsePipelineOutput(stdoutStr);
+            if (pipelineResult == null) {
+                return getMockResponse(city, query, profile, "Failed to parse pipeline JSON from output: " + stdoutStr.substring(0, Math.min(500, stdoutStr.length())));
             }
 
-            // Extract values from state
+            // Extract values from pipeline output
             result.put("success", true);
-            result.put("aqi", state.get("aqi_level"));
-            result.put("risk_level", state.get("risk_level"));
-            result.put("risk_score", state.get("risk_score"));
-            result.put("alerts", state.get("alerts"));
-            
-            // Extract agent responses
-            String response = extractAgentResponse(stdoutStr);
-            result.put("response", response);
+            result.put("response", pipelineResult.getOrDefault("response", "Agent pipeline completed."));
+            result.put("pipeline", pipelineResult.get("pipeline"));
+
+            // AQI from air_quality sub-object
+            @SuppressWarnings("unchecked")
+            Map<String, Object> aqData = (Map<String, Object>) pipelineResult.get("air_quality");
+            if (aqData != null) {
+                result.put("aqi", aqData.get("aqi"));
+            } else {
+                result.put("aqi", pipelineResult.get("aqi"));
+            }
+
+            // Risk from risk sub-object
+            @SuppressWarnings("unchecked")
+            Map<String, Object> riskData = (Map<String, Object>) pipelineResult.get("risk");
+            if (riskData != null) {
+                result.put("risk_level", riskData.get("risk_level"));
+                result.put("risk_score", riskData.get("risk_score"));
+            } else {
+                // ADK pipeline — extract from context_state
+                @SuppressWarnings("unchecked")
+                Map<String, Object> ctxState = (Map<String, Object>) pipelineResult.get("context_state");
+                if (ctxState != null) {
+                    result.put("risk_level", ctxState.get("risk_level"));
+                    result.put("risk_score", ctxState.get("risk_score"));
+                }
+            }
+
+            // Alerts from alert sub-object
+            @SuppressWarnings("unchecked")
+            Map<String, Object> alertData = (Map<String, Object>) pipelineResult.get("alert");
+            List<String> alerts = new ArrayList<>();
+            if (alertData != null && Boolean.TRUE.equals(alertData.get("alert_needed"))) {
+                Object msg = alertData.get("message");
+                if (msg != null) alerts.add(msg.toString());
+            }
+            result.put("alerts", alerts);
+
             return result;
 
         } catch (Exception e) {
@@ -135,46 +163,34 @@ public class AIService {
         }
     }
 
-    private Map<String, Object> parseJsonState(String stdout) {
+    /**
+     * Parse the pipeline JSON output. The agents_workflow.py script prints a single JSON object
+     * on the last line of stdout (after any Python warnings/deprecation messages).
+     */
+    private Map<String, Object> parsePipelineOutput(String stdout) {
+        if (stdout == null || stdout.isBlank()) return null;
+        // Find the last { ... } JSON block in the output (skip Python warnings)
+        int lastBrace = stdout.lastIndexOf('}');
+        if (lastBrace == -1) return null;
+        // Walk backwards to find the matching opening brace
+        int depth = 0;
+        int startIdx = -1;
+        for (int i = lastBrace; i >= 0; i--) {
+            char c = stdout.charAt(i);
+            if (c == '}') depth++;
+            else if (c == '{') {
+                depth--;
+                if (depth == 0) { startIdx = i; break; }
+            }
+        }
+        if (startIdx == -1) return null;
         try {
-            // Find the JSON block starting with { and ending with }
-            int startIdx = stdout.indexOf('{', stdout.indexOf("Final Shared Context State"));
-            if (startIdx == -1) {
-                startIdx = stdout.indexOf('{');
-            }
-            int endIdx = stdout.lastIndexOf('}');
-            if (startIdx == -1 || endIdx == -1 || startIdx > endIdx) {
-                return null;
-            }
-            String jsonStr = stdout.substring(startIdx, endIdx + 1);
+            String jsonStr = stdout.substring(startIdx, lastBrace + 1);
             return objectMapper.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            System.err.println("JSON Parsing error: " + e.getMessage());
+            System.err.println("Pipeline JSON parse error: " + e.getMessage());
             return null;
         }
-    }
-
-    private String extractAgentResponse(String stdout) {
-        // Regex to match: [Agent: AIHealthAssistantAgent] -> content
-        Pattern pattern = Pattern.compile("\\[Agent:\\s*AIHealthAssistantAgent\\]\\s*->\\s*(.*)", Pattern.DOTALL);
-        Matcher matcher = pattern.matcher(stdout);
-        if (matcher.find()) {
-            String fullMatch = matcher.group(1);
-            // If another agent header follows, cut there
-            int nextAgentIdx = fullMatch.indexOf("\n[Agent:");
-            if (nextAgentIdx != -1) {
-                return fullMatch.substring(0, nextAgentIdx).trim();
-            }
-            // Or if JSON stats follow
-            int statsIdx = fullMatch.indexOf("\n--- Pipeline Execution Completed");
-            if (statsIdx != -1) {
-                return fullMatch.substring(0, statsIdx).trim();
-            }
-            return fullMatch.trim();
-        }
-        
-        // Fallback: search for last line or any agent dialogue
-        return "AirSense AI multi-agent workflow executed successfully, but custom agent response formatting was not resolved.";
     }
 
     private Map<String, Object> getMockResponse(String city, String query, HealthProfile profile, String debugMessage) {
@@ -218,7 +234,8 @@ public class AIService {
     }
 
     private void syncAuditLogs() {
-        File sqliteDbFile = new File("e:/AirSense_AI/agents-cli/airsense_audit.db");
+        // Try Docker path first, then relative path
+        File sqliteDbFile = new File("/agents-cli/airsense_audit.db");
         if (!sqliteDbFile.exists()) {
             sqliteDbFile = new File("../agents-cli/airsense_audit.db");
         }
@@ -231,7 +248,8 @@ public class AIService {
         }
 
         String url = "jdbc:sqlite:" + sqliteDbFile.getAbsolutePath();
-        String sql = "SELECT id, request, security_status, timestamp FROM audit_logs WHERE id > " + lastSyncedAuditLogId + " ORDER BY id ASC";
+        // Column is 'user_input' in the agents_workflow.py SQLite schema
+        String sql = "SELECT id, user_input, security_status, timestamp FROM audit_logs WHERE id > " + lastSyncedAuditLogId + " ORDER BY id ASC";
 
         try {
             Class.forName("org.sqlite.JDBC");
@@ -241,7 +259,7 @@ public class AIService {
                 
                 while (rs.next()) {
                     int logId = rs.getInt("id");
-                    String request = rs.getString("request");
+                    String request = rs.getString("user_input");
                     String status = rs.getString("security_status");
                     String timestampStr = rs.getString("timestamp");
                     

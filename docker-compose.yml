@@ -1,69 +1,50 @@
-version: '3.8'
+version: '3.9'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: airsense-postgres
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_DB: airsense_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d airsense_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: airsense-redis
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
+  # ─── Spring Boot Backend ───────────────────────────────────────
   backend:
     build:
-      context: ./backend-java
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend-java/Dockerfile
     container_name: airsense-backend
     ports:
       - "8080:8080"
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=airsense_db
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - AIRSENSE_AGENTS_PATH=/app/agents-cli/agents_workflow.py
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET:-airsense-local-jwt-secret-key-min32chars}
+      - AGENTS_PATH=/agents-cli/agents_workflow.py
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - H2_CONSOLE=true
     volumes:
-      - ./agents-cli:/app/agents-cli
-      - ./mcp-server:/app/mcp-server
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - ./agents-cli:/agents-cli:ro
+      - ./mcp-server:/mcp-server:ro
+    networks:
+      - airsense-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
+  # ─── React Frontend (dev mode) ─────────────────────────────────
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: node:20-alpine
     container_name: airsense-frontend
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
     ports:
-      - "3000:80"
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     depends_on:
       - backend
+    networks:
+      - airsense-network
+    restart: unless-stopped
 
-volumes:
-  postgres_data:
+networks:
+  airsense-network:
+    driver: bridge

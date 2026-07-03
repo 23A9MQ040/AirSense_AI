@@ -31,10 +31,17 @@ try:
     from google.adk.agents import LlmAgent, SequentialAgent
     from google.adk.sessions import InMemorySessionService
     from google.adk.runners import Runner
-    from google.adk import types
+    import google.genai.types as types
+    # Try Workflow (ADK v2.3+), fall back to SequentialAgent
+    try:
+        from google.adk.agents import Workflow
+        USE_WORKFLOW = True
+    except ImportError:
+        USE_WORKFLOW = False
     ADK_AVAILABLE = True
 except ImportError:
     ADK_AVAILABLE = False
+    USE_WORKFLOW = False
 
 # ─────────────────────────────────────────────────────────────────
 # Import native tool implementations
@@ -271,12 +278,26 @@ Provide alert JSON: alert_needed, severity, message, actions.""",
         tools=[adk_emergency_alert],
     )
     
-    # Sequential pipeline
-    pipeline = SequentialAgent(
-        name="AirSensePipeline",
-        sub_agents=[air_quality_agent, health_risk_agent, assistant_agent, notification_agent],
-        description="Full AirSense AI processing pipeline",
-    )
+    # Sequential pipeline (use Workflow if available, else SequentialAgent fallback)
+    if USE_WORKFLOW:
+        try:
+            pipeline = Workflow(
+                name="AirSensePipeline",
+                sub_agents=[air_quality_agent, health_risk_agent, assistant_agent, notification_agent],
+                description="Full AirSense AI processing pipeline",
+            )
+        except Exception:
+            pipeline = SequentialAgent(
+                name="AirSensePipeline",
+                sub_agents=[air_quality_agent, health_risk_agent, assistant_agent, notification_agent],
+                description="Full AirSense AI processing pipeline",
+            )
+    else:
+        pipeline = SequentialAgent(
+            name="AirSensePipeline",
+            sub_agents=[air_quality_agent, health_risk_agent, assistant_agent, notification_agent],
+            description="Full AirSense AI processing pipeline",
+        )
     
     runner = Runner(
         agent=pipeline,
@@ -310,12 +331,11 @@ Provide alert JSON: alert_needed, severity, message, actions.""",
 def run_native_pipeline(city: str, asthma_history: bool, user_query: str) -> dict:
     """Fallback: Run the agent pipeline using native tool calls + Gemini API."""
     try:
-        import google.generativeai as genai
+        import google.genai as genai
         api_key = os.environ.get("GEMINI_API_KEY", "")
         if not api_key:
             raise ValueError("GEMINI_API_KEY not set")
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        client = genai.Client(api_key=api_key)
     except Exception as e:
         return run_mock_pipeline(city, asthma_history, user_query, str(e))
     
@@ -385,7 +405,7 @@ Instructions:
 - End with one specific actionable tip for today"""
 
     try:
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         assistant_response = resp.text
     except Exception as e:
         assistant_response = f"I'm having trouble connecting to the AI service right now. However, based on current data: AQI in {city} is {aqi} ({aq_category(aqi)}). {'; '.join(recommendations[:2]) if recommendations else 'Stay safe and monitor air quality.'}"
