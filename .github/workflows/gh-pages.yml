@@ -38,7 +38,7 @@ jobs:
           
       - name: Build
         env:
-          VITE_API_URL: https://airsense-ai-backend.onrender.com
+          VITE_API_URL: https://airsense-ai-backend-oaxd.onrender.com
         run: |
           cd frontend
           npm run build
