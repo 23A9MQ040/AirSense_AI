@@ -507,7 +507,7 @@ def main():
         "threats_found": len(sec_result["threats"]),
     }
     
-    print(json.dumps(result, ensure_ascii=False))
+    print(json.dumps(result, ensure_ascii=True))
 
 if __name__ == "__main__":
     main()

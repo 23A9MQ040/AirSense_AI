@@ -71,14 +71,21 @@ public class ReportService {
             Paragraph details = new Paragraph();
             details.setSpacingBefore(10);
             details.setSpacingAfter(20);
-            details.add(new Chunk("Name: ", boldFont)).add(new Chunk(user.getName() + "\n", normalFont));
-            details.add(new Chunk("Email: ", boldFont)).add(new Chunk(user.getEmail() + "\n", normalFont));
-            details.add(new Chunk("Monitoring City: ", boldFont)).add(new Chunk(city + "\n\n", normalFont));
+            details.add(new Chunk("Name: ", boldFont));
+            details.add(new Chunk(user.getName() + "\n", normalFont));
+            details.add(new Chunk("Email: ", boldFont));
+            details.add(new Chunk(user.getEmail() + "\n", normalFont));
+            details.add(new Chunk("Monitoring City: ", boldFont));
+            details.add(new Chunk(city + "\n\n", normalFont));
             
-            details.add(new Chunk("Age: ", boldFont)).add(new Chunk(profile.getAge() + "\n", normalFont));
-            details.add(new Chunk("Asthma History: ", boldFont)).add(new Chunk((profile.isAsthmaHistory() ? "Yes" : "No") + "\n", normalFont));
-            details.add(new Chunk("Allergy Type: ", boldFont)).add(new Chunk(profile.getAllergyType() + "\n", normalFont));
-            details.add(new Chunk("Sensitivity Level: ", boldFont)).add(new Chunk(profile.getSensitivityLevel() + "\n", normalFont));
+            details.add(new Chunk("Age: ", boldFont));
+            details.add(new Chunk(profile.getAge() + "\n", normalFont));
+            details.add(new Chunk("Asthma History: ", boldFont));
+            details.add(new Chunk((profile.isAsthmaHistory() ? "Yes" : "No") + "\n", normalFont));
+            details.add(new Chunk("Allergy Type: ", boldFont));
+            details.add(new Chunk(profile.getAllergyType() + "\n", normalFont));
+            details.add(new Chunk("Sensitivity Level: ", boldFont));
+            details.add(new Chunk(profile.getSensitivityLevel() + "\n", normalFont));
             document.add(details);
 
             // Section 2: Current Air Quality Status
@@ -86,10 +93,14 @@ public class ReportService {
             Paragraph aqParagraph = new Paragraph();
             aqParagraph.setSpacingBefore(10);
             aqParagraph.setSpacingAfter(20);
-            aqParagraph.add(new Chunk("Air Quality Index (AQI): ", boldFont)).add(new Chunk(aq.getAqi() + " (" + getAqiCategory(aq.getAqi()) + ")\n", normalFont));
-            aqParagraph.add(new Chunk("PM2.5 Level: ", boldFont)).add(new Chunk(aq.getPm25() + " µg/m³\n", normalFont));
-            aqParagraph.add(new Chunk("PM10 Level: ", boldFont)).add(new Chunk(aq.getPm10() + " µg/m³\n", normalFont));
-            aqParagraph.add(new Chunk("Last Updated: ", boldFont)).add(new Chunk(aq.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n", normalFont));
+            aqParagraph.add(new Chunk("Air Quality Index (AQI): ", boldFont));
+            aqParagraph.add(new Chunk(aq.getAqi() + " (" + getAqiCategory(aq.getAqi()) + ")\n", normalFont));
+            aqParagraph.add(new Chunk("PM2.5 Level: ", boldFont));
+            aqParagraph.add(new Chunk(aq.getPm25() + " µg/m³\n", normalFont));
+            aqParagraph.add(new Chunk("PM10 Level: ", boldFont));
+            aqParagraph.add(new Chunk(aq.getPm10() + " µg/m³\n", normalFont));
+            aqParagraph.add(new Chunk("Last Updated: ", boldFont));
+            aqParagraph.add(new Chunk(aq.getTimestamp().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) + "\n", normalFont));
             document.add(aqParagraph);
 
             // Section 3: Risk Assessment Table

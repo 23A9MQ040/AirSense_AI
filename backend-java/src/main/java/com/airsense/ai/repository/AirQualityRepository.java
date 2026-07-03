@@ -10,4 +10,5 @@ import java.util.UUID;
 @Repository
 public interface AirQualityRepository extends JpaRepository<AirQuality, UUID> {
     Optional<AirQuality> findTopByCityIgnoreCaseOrderByTimestampDesc(String city);
+    java.util.List<AirQuality> findByCityOrderByTimestampDesc(String city);
 }
