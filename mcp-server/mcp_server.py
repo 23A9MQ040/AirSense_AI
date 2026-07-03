@@ -1,5 +1,4 @@
 import time
-import random
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP Server

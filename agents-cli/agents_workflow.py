@@ -22,7 +22,6 @@ import os
 import asyncio
 import sqlite3
 from datetime import datetime
-from typing import Any
 
 # ─────────────────────────────────────────────────────────────────
 # Import Google ADK
@@ -407,7 +406,7 @@ Instructions:
     try:
         resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         assistant_response = resp.text
-    except Exception as e:
+    except Exception:
         assistant_response = f"I'm having trouble connecting to the AI service right now. However, based on current data: AQI in {city} is {aqi} ({aq_category(aqi)}). {'; '.join(recommendations[:2]) if recommendations else 'Stay safe and monitor air quality.'}"
     
     return {
@@ -494,7 +493,7 @@ def main():
     if ADK_AVAILABLE and os.environ.get("GEMINI_API_KEY"):
         try:
             result = asyncio.run(run_adk_pipeline(city, asthma_history, safe_query))
-        except Exception as e:
+        except Exception:
             result = None
     
     if result is None:

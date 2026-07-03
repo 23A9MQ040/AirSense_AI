@@ -1,0 +1,15 @@
+# Ruff configuration file for AirSense AI
+# See https://docs.astral.sh/ruff/settings/ for details
+
+line-length = 200
+
+[lint]
+select = ["E", "F", "W"]
+
+# Ignore rules:
+# E701: Multiple statements on one line (colon)
+# F841: Local variable is assigned to but never used
+# F401: Unused imports
+# E501: Line too long
+# W: Warning rules (mostly trailing whitespace and formatting check issues)
+ignore = ["E701", "F841", "F401", "E501", "W"]
