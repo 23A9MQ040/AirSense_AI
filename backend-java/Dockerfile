@@ -25,6 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
+# Upgrade pip to avoid wheel compatibility issues
+RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip
+
 # Install Python AI dependencies
 RUN pip3 install --break-system-packages --no-cache-dir \
     google-adk \
