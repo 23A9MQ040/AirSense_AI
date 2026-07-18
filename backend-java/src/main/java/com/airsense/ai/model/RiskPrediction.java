@@ -26,7 +26,7 @@ public class RiskPrediction {
     private User user;
     
     @Column(name = "risk_score")
-    private double riskScore;
+    private int riskScore;
     
     @Column(name = "risk_level")
     private String riskLevel; // LOW, MEDIUM, HIGH

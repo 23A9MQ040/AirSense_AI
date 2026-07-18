@@ -65,13 +65,14 @@ public class HealthRiskService {
             baseRisk += 0.10;
         }
 
-        // Bound risk score between 0.0 and 1.0
-        double riskScore = Math.min(1.0, Math.max(0.0, baseRisk));
+        // Bound risk score between 0.0 and 1.0 then convert to 0-100 integer scale
+        double rawScore = Math.min(1.0, Math.max(0.0, baseRisk));
+        int riskScore = (int) Math.round(rawScore * 100);
         
         String riskLevel;
-        if (riskScore >= 0.7) {
+        if (riskScore >= 70) {
             riskLevel = "HIGH";
-        } else if (riskScore >= 0.4) {
+        } else if (riskScore >= 40) {
             riskLevel = "MEDIUM";
         } else {
             riskLevel = "LOW";
@@ -79,7 +80,7 @@ public class HealthRiskService {
 
         RiskPrediction prediction = new RiskPrediction();
         prediction.setUser(user);
-        prediction.setRiskScore(Math.round(riskScore * 100.0) / 100.0);
+        prediction.setRiskScore(riskScore);
         prediction.setRiskLevel(riskLevel);
         prediction.setDate(LocalDateTime.now());
         

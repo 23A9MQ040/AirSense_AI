@@ -31,6 +31,28 @@ try:
     from google.adk.sessions import InMemorySessionService
     from google.adk.runners import Runner
     import google.genai.types as types
+    
+    # Try to import RetryConfig from various possible locations
+    RetryConfig = None
+    for _retry_path in [
+        ("google.adk.workflow._retry_config", "RetryConfig"),
+        ("google.adk.agents._retry_config", "RetryConfig"),
+        ("google.adk.agents", "RetryConfig"),
+        ("google.adk", "RetryConfig"),
+    ]:
+        try:
+            import importlib
+            _mod = importlib.import_module(_retry_path[0])
+            RetryConfig = getattr(_mod, _retry_path[1])
+            break
+        except (ImportError, AttributeError):
+            continue
+    
+    if RetryConfig is None:
+        # Provide a no-op fallback so the rest of the code doesn't break
+        class RetryConfig:
+            def __init__(self, **kwargs): pass
+    
     # Try Workflow (ADK v2.3+), fall back to SequentialAgent
     try:
         from google.adk.agents import Workflow
@@ -41,6 +63,8 @@ try:
 except ImportError:
     ADK_AVAILABLE = False
     USE_WORKFLOW = False
+    class RetryConfig:
+        def __init__(self, **kwargs): pass
 
 # ─────────────────────────────────────────────────────────────────
 # Import native tool implementations
@@ -201,6 +225,15 @@ async def run_adk_pipeline(city: str, asthma_history: bool, user_query: str) -> 
     
     session_service = InMemorySessionService()
     
+    retry_cfg = RetryConfig(
+        max_attempts=6,
+        initial_delay=5.0,
+        max_delay=30.0,
+        backoff_factor=1.5,
+        jitter=0.5,
+        exceptions=None
+    )
+    
     # Shared context state
     session = await session_service.create_session(
         app_name=APP_NAME,
@@ -227,6 +260,7 @@ Your task:
 City to monitor: {city}
 Provide a concise JSON summary of: aqi, pm25, pm10, weather, and aqi_category.""",
         tools=[adk_get_air_quality, adk_weather_analysis],
+        retry_config=retry_cfg,
     )
     
     # Agent 2: HealthRiskPredictionAgent
@@ -243,6 +277,7 @@ Your task:
 City: {city}, Asthma History: {asthma_history}
 Provide concise risk assessment JSON: risk_level, risk_score, explanation.""",
         tools=[adk_predict_health_risk],
+        retry_config=retry_cfg,
     )
     
     # Agent 3: AIHealthAssistantAgent
@@ -259,6 +294,7 @@ Your task:
 Consider: City={city}, Asthma={asthma_history}
 Be compassionate, clear, and helpful. Include specific recommendations.""",
         tools=[adk_generate_recommendation],
+        retry_config=retry_cfg,
     )
     
     # Agent 4: NotificationAgent
@@ -275,6 +311,7 @@ Your task:
 City: {city}, Asthma History: {asthma_history}
 Provide alert JSON: alert_needed, severity, message, actions.""",
         tools=[adk_emergency_alert],
+        retry_config=retry_cfg,
     )
     
     # Sequential pipeline (use Workflow if available, else SequentialAgent fallback)
@@ -403,11 +440,23 @@ Instructions:
 - Format with clear paragraphs, no excessive bullet points
 - End with one specific actionable tip for today"""
 
-    try:
-        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-        assistant_response = resp.text
-    except Exception:
-        assistant_response = f"I'm having trouble connecting to the AI service right now. However, based on current data: AQI in {city} is {aqi} ({aq_category(aqi)}). {'; '.join(recommendations[:2]) if recommendations else 'Stay safe and monitor air quality.'}"
+    import time
+    import random
+    
+    assistant_response = ""
+    for attempt in range(5):
+        try:
+            resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+            assistant_response = resp.text
+            break
+        except Exception as e:
+            if attempt == 4:
+                # Last attempt failed, fall back
+                assistant_response = f"I'm having trouble connecting to the AI service right now. However, based on current data: AQI in {city} is {aqi} ({aq_category(aqi)}). {'; '.join(recommendations[:2]) if recommendations else 'Stay safe and monitor air quality.'}"
+            else:
+                # Wait and retry on 429 or other transient errors
+                sleep_time = (2 ** attempt) * 4.0 + random.uniform(0.5, 1.5)
+                time.sleep(sleep_time)
     
     return {
         "response": assistant_response,

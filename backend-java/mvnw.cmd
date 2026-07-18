@@ -50,7 +50,8 @@ set APP_BASE_NAME=%~n0
 set APP_HOME=%DIRNAME%
 
 @REM Resolve any "." and ".." in APP_HOME to make it shorter.
-for %%i in ("%APP_HOME%") do set APP_HOME=%%~f1
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+if "%APP_HOME:~-1%"=="\" set "APP_HOME=%APP_HOME:~0,-1%"
 
 @REM Validate JAVA_HOME
 if not "%JAVA_HOME%" == "" goto OkJHome

@@ -1,6 +1,7 @@
 import os
 import asyncio
-from agents_workflow import run_pipeline, init_audit_db
+import agents_workflow
+from agents_workflow import init_audit_db
 
 async def interactive_playground():
     init_audit_db()
@@ -41,13 +42,16 @@ async def interactive_playground():
                 print("Exiting playground. Goodbye!")
                 break
                 
-            prompt = f"City: {city}. Query: {query}"
-            await run_pipeline(
-                user_id="playground_user",
-                session_id=session_id,
-                prompt=prompt,
-                user_profile=user_profile
-            )
+            if os.environ.get("GEMINI_API_KEY"):
+                try:
+                    result = await agents_workflow.run_adk_pipeline(city, has_asthma, query)
+                except Exception as e:
+                    print(f"ADK pipeline failed: {e}. Falling back to native pipeline.")
+                    result = agents_workflow.run_native_pipeline(city, has_asthma, query)
+            else:
+                result = agents_workflow.run_native_pipeline(city, has_asthma, query)
+            
+            print(f"\n🤖 AirSense Assistant:\n{result.get('response')}")
         except KeyboardInterrupt:
             print("\nExiting playground...")
             break

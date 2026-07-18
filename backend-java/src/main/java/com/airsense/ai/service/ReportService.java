@@ -133,7 +133,7 @@ public class ReportService {
                 if (count++ >= 5) break; // show top 5 historical risks
                 
                 table.addCell(new PdfPCell(new Paragraph(risk.getDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), normalFont)));
-                table.addCell(new PdfPCell(new Paragraph(String.valueOf(risk.getRiskScore()), normalFont)));
+                table.addCell(new PdfPCell(new Paragraph(risk.getRiskScore() + "/100", normalFont)));
                 
                 PdfPCell levelCell = new PdfPCell(new Paragraph(risk.getRiskLevel(), normalFont));
                 if ("HIGH".equalsIgnoreCase(risk.getRiskLevel())) {

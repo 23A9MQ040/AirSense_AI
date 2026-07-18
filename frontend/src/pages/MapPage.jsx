@@ -83,6 +83,8 @@ export default function MapPage() {
     loadCitiesData();
   }, [selectedCity]);
 
+  const leafletRef = useRef(null);
+
   // Initialize Leaflet map
   useEffect(() => {
     if (typeof window === 'undefined' || !mapRef.current) return;
@@ -96,6 +98,8 @@ export default function MapPage() {
       try {
         const L = (await import('leaflet')).default;
         await import('leaflet/dist/leaflet.css');
+
+        leafletRef.current = L;
 
         const map = L.map(mapRef.current, {
           center: [20, 77],
@@ -126,7 +130,7 @@ export default function MapPage() {
 
   // Add markers when data loads
   useEffect(() => {
-    if (!mapInstanceRef.current || Object.keys(cityData).length === 0) return;
+    if (!mapInstanceRef.current || !leafletRef.current || Object.keys(cityData).length === 0) return;
 
     const CITY_COORDS = {
       'Delhi': [28.6139, 77.2090], 'Mumbai': [19.0760, 72.8777],
@@ -148,15 +152,14 @@ export default function MapPage() {
       return '#7f1d1d';
     };
 
-    try {
-      const L = window.L || mapInstanceRef.current._leaflet_id ? mapInstanceRef.current : null;
-      if (!L) return;
+    const L = leafletRef.current;
 
+    try {
       Object.values(cityData).forEach(({ city, aqi }) => {
         const coords = CITY_COORDS[city];
         if (!coords) return;
         const color = getMarkerColor(aqi);
-        const icon = window.L?.divIcon({
+        const icon = L.divIcon({
           html: `<div style="background:${color}22;border:2px solid ${color};color:${color};border-radius:50%;width:44px;height:44px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:bold;font-size:12px;backdrop-filter:blur(4px)">
             <span>${aqi}</span>
           </div>`,
@@ -164,13 +167,13 @@ export default function MapPage() {
           iconSize: [44, 44],
           iconAnchor: [22, 22],
         });
-        if (icon && mapInstanceRef.current) {
-          window.L?.marker(coords, { icon })
-            .bindPopup(`<b>${city}</b><br>AQI: ${aqi}`)
-            .addTo(mapInstanceRef.current);
-        }
+        L.marker(coords, { icon })
+          .bindPopup(`<b>${city}</b><br>AQI: ${aqi}`)
+          .addTo(mapInstanceRef.current);
       });
-    } catch (e) {}
+    } catch (e) {
+      console.error('Failed to add map markers:', e);
+    }
   }, [cityData]);
 
   const sortedCities = Object.values(cityData).sort((a, b) =>
