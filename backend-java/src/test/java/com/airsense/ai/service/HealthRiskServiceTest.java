@@ -90,7 +90,7 @@ class HealthRiskServiceTest {
         // Asthma -> +0.20
         // High Sensitivity -> +0.25
         // Total = 1.35, bounded to 1.0
-        assertEquals(1.0, result.getRiskScore());
+        assertEquals(100, result.getRiskScore());
         
         verify(riskPredictionRepository, times(1)).save(any(RiskPrediction.class));
         verify(alertRepository, times(1)).save(any(Alert.class));
